@@ -22,7 +22,7 @@ const postColumns = `p.id, p.slug, p.type, p.status, p.title, p.body_markdown, p
 // Create stores a new post: slug allocation, the row itself, its asset links and
 // its tags all happen in one transaction, so a rejected relationship write
 // leaves nothing behind.
-func Create(ctx context.Context, db *sql.DB, authorID int64, in Input, now time.Time) (*Post, error) {
+func Create(ctx context.Context, db *sql.DB, in Input, now time.Time) (*Post, error) {
 	if db == nil {
 		return nil, errors.New("content: create: nil database")
 	}

@@ -33,8 +33,9 @@ func Feed(ctx context.Context, db *sql.DB, opts FeedOptions) (*Page, error) {
 		return nil, errors.New("content: feed: nil database")
 	}
 	switch opts.Type {
-	case "", TypeMoment, TypeArticle, TypePhoto:
+	case "", TypeArticle, TypePhoto:
 	default:
+		// docs/PRODUCT.md §5.1: moments only ever appear in the unfiltered feed.
 		return nil, invalid("invalid_type", "该内容筛选类型不存在")
 	}
 	limit, err := pageLimit(opts.Limit)

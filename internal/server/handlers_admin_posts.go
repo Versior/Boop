@@ -53,15 +53,14 @@ func (s *server) requireOwner(w http.ResponseWriter, r *http.Request) (auth.User
 }
 
 func (s *server) handleCreatePostAPI(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.requireOwner(w, r)
-	if !ok {
+	if _, ok := s.requireOwner(w, r); !ok {
 		return
 	}
 	var body createPostRequest
 	if !s.readJSON(w, r, &body, contentJSONBytes) {
 		return
 	}
-	post, err := content.Create(r.Context(), s.db, user.ID, content.Input{
+	post, err := content.Create(r.Context(), s.db, content.Input{
 		Type:       body.Type,
 		Status:     body.Status,
 		Title:      body.Title,

@@ -505,6 +505,7 @@ func TestFeedAPIRejectsBadFiltersAndCursor(t *testing.T) {
 		code   string
 	}{
 		{"/api/v1/posts?type=video", "invalid_type"},
+		{"/api/v1/posts?type=moment", "invalid_type"},
 		{"/api/v1/posts?limit=999", "invalid_limit"},
 		{"/api/v1/posts?limit=0", ""},
 		{"/api/v1/posts?cursor=nonsense", "invalid_cursor"},
@@ -676,6 +677,9 @@ func TestHomePageEmptyStateAndFilters(t *testing.T) {
 	}
 	if rec := c.do(t, http.MethodGet, "/?type=video", "", nil, nil); rec.Code != http.StatusBadRequest {
 		t.Errorf("unknown type status = %d, want 400", rec.Code)
+	}
+	if rec := c.do(t, http.MethodGet, "/?type=moment", "", nil, nil); rec.Code != http.StatusBadRequest {
+		t.Errorf("moment filter status = %d, want 400", rec.Code)
 	}
 	if rec := c.do(t, http.MethodGet, "/?cursor=broken", "", nil, nil); rec.Code != http.StatusBadRequest {
 		t.Errorf("broken cursor status = %d, want 400", rec.Code)
