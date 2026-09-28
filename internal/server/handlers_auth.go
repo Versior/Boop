@@ -276,6 +276,11 @@ func (s *server) handleRegisterAPI(w http.ResponseWriter, r *http.Request) {
 	if !s.readJSON(w, r, &body, maxAuthJSONBytes) {
 		return
 	}
+	// Registration is limited by address and by target email, so neither one
+	// address nor one mailbox can be used to create accounts in bulk.
+	if !s.guardRateLimit(w, r, s.limiters.register, "register", ipKey(r.RemoteAddr), emailKey(body.Email)) {
+		return
+	}
 
 	user, err := auth.CreateReader(r.Context(), s.db, body.Email, body.DisplayName, body.Password)
 	switch {
@@ -309,6 +314,11 @@ func (s *server) handleLoginAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(body.Email) == "" || body.Password == "" {
 		writeFailure(w, r, http.StatusBadRequest, "invalid_body", "请填写邮箱和密码")
+		return
+	}
+	// Guess attempts are limited per address and per account before any password
+	// hashing happens, so a flood cannot burn CPU either way.
+	if !s.guardRateLimit(w, r, s.limiters.login, "login", ipKey(r.RemoteAddr), emailKey(body.Email)) {
 		return
 	}
 

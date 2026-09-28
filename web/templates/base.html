@@ -102,7 +102,7 @@
         <a class="nav-item{{if eq .Filter "photo"}} on{{end}}" href="/?type=photo"{{if eq .Filter "photo"}} aria-current="page"{{end}}>
           <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-camera"/></svg><span class="label">摄影</span>
         </a>
-        <a class="nav-item" href="/bookmarks">
+        <a class="nav-item{{if eq .Filter "bookmarks"}} on{{end}}" href="/bookmarks"{{if eq .Filter "bookmarks"}} aria-current="page"{{end}}>
           <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bookmark"/></svg><span class="label">收藏</span>
         </a>
         <a class="nav-item" href="/login">
@@ -126,6 +126,11 @@
           <span class="brand-name">Boop</span>
         </a>
         <div class="tb-actions">
+          {{if .Owner}}
+          <a class="icon-btn" href="/admin/comments" aria-label="评论审核" title="评论审核">
+            <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-comment"/></svg>
+          </a>
+          {{end}}
           <button class="icon-btn" type="button" data-theme-toggle aria-label="切换到深色主题" title="切换到深色主题">
             <svg class="ic ic-nav ic-moon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-moon"/></svg>
             <svg class="ic ic-nav ic-sun" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sun"/></svg>
@@ -148,6 +153,7 @@
 
 </div>
 
+
 <!-- ========== 移动端固定底部导航 ========== -->
 <nav class="bottom-nav" aria-label="移动端导航">
   <a class="{{if eq .Filter ""}}on{{end}}" href="/"{{if eq .Filter ""}} aria-current="page"{{end}}>
@@ -159,7 +165,7 @@
   <a class="{{if eq .Filter "photo"}}on{{end}}" href="/?type=photo"{{if eq .Filter "photo"}} aria-current="page"{{end}}>
     <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-camera"/></svg><span>摄影</span>
   </a>
-  <a href="/bookmarks">
+  <a class="{{if eq .Filter "bookmarks"}}on{{end}}" href="/bookmarks"{{if eq .Filter "bookmarks"}} aria-current="page"{{end}}>
     <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bookmark"/></svg><span>收藏</span>
   </a>
   <a href="/login">
@@ -169,4 +175,71 @@
 
 </body>
 </html>
+{{end}}
+
+<!-- ========== 共享模板：信息流卡片（首页与收藏页共用一套标记） ========== -->
+{{define "feedCard"}}
+      <article class="post" data-type="{{.Type}}">
+        <span class="avatar" aria-hidden="true"><svg viewBox="0 0 48 48"><use href="#i-avatar"/></svg></span>
+        <div class="post-body">
+          <div class="post-head">
+            <span class="name">{{.OwnerName}}</span>
+            <span class="chip chip-owner">站长</span>
+            <span class="sep">·</span>
+            <time datetime="{{.Datetime}}">{{.TimeLabel}}</time>
+            <span class="chip chip-type">{{.TypeLabel}}</span>
+          </div>
+
+          {{if .Title}}
+          <div class="article-card">
+            <div class="article-copy">
+              <h2><a href="{{.URL}}">{{.Title}}</a></h2>
+              {{if .Excerpt}}<p>{{.Excerpt}}</p>{{end}}
+            </div>
+          </div>
+          {{end}}
+
+          {{if .Text}}<div class="post-text">{{.Text}}</div>{{end}}
+
+          {{if .ImageURL}}
+          <figure class="photo-card">
+            <img class="photo-art" src="{{.ImageURL}}" alt="{{.ImageAlt}}" loading="lazy" decoding="async">
+            {{if or .Location .CapturedLabel}}
+            <figcaption class="photo-caption">
+              {{if .Location}}<span>{{.Location}}</span>{{end}}
+              {{if and .Location .CapturedLabel}}<span class="sep">·</span>{{end}}
+              {{if .CapturedLabel}}<span>{{.CapturedLabel}}</span>{{end}}
+            </figcaption>
+            {{end}}
+          </figure>
+          {{end}}
+
+          <div class="actions">
+            <a class="action comment" href="{{.URL}}" aria-label="查看 {{.CommentCount}} 条评论">
+              <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-comment"/></svg><span class="count">{{.CommentCount}}</span>
+            </a>
+            {{template "reactionButtons" .}}
+            <a class="action permalink" href="{{.URL}}">查看详情</a>
+          </div>
+        </div>
+      </article>
+{{end}}
+
+<!-- 点赞与收藏：登录读者得到真实写按钮，游客得到登录入口，无 JS 也能点击 -->
+{{define "reactionButtons"}}
+            {{if .CanReact}}
+            <button class="action like{{if .Liked}} is-on{{end}}" type="button" data-reaction="like" data-post-id="{{.ID}}" data-on="{{if .Liked}}true{{else}}false{{end}}" aria-pressed="{{if .Liked}}true{{else}}false{{end}}" aria-label="点赞 {{.LikeCount}}">
+              <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-heart"/></svg><span class="count" data-reaction-count>{{.LikeCount}}</span>
+            </button>
+            <button class="action bookmark{{if .Bookmarked}} is-on{{end}}" type="button" data-reaction="bookmark" data-post-id="{{.ID}}" data-on="{{if .Bookmarked}}true{{else}}false{{end}}" aria-pressed="{{if .Bookmarked}}true{{else}}false{{end}}" aria-label="{{if .Bookmarked}}取消收藏{{else}}收藏{{end}}">
+              <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bookmark"/></svg>
+            </button>
+            {{else}}
+            <a class="action like" href="/login" aria-label="登录后点赞 {{.LikeCount}}">
+              <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-heart"/></svg><span class="count">{{.LikeCount}}</span>
+            </a>
+            <a class="action bookmark" href="/login" aria-label="登录后收藏">
+              <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bookmark"/></svg>
+            </a>
+            {{end}}
 {{end}}

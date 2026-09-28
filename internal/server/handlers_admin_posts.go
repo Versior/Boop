@@ -76,7 +76,9 @@ func (s *server) handleCreatePostAPI(w http.ResponseWriter, r *http.Request) {
 		s.writeContentFailure(w, r, "create post", err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"data": postPayloadOf(*post)})
+	payload := postPayloadOf(*post)
+	applyViewerState(&payload, s.viewerStates(r.Context(), r, []int64{post.ID}))
+	writeJSON(w, http.StatusCreated, map[string]any{"data": payload})
 }
 
 func (s *server) handlePatchPostAPI(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +112,9 @@ func (s *server) handlePatchPostAPI(w http.ResponseWriter, r *http.Request) {
 		s.writeContentFailure(w, r, "update post", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": postPayloadOf(*post)})
+	payload := postPayloadOf(*post)
+	applyViewerState(&payload, s.viewerStates(r.Context(), r, []int64{post.ID}))
+	writeJSON(w, http.StatusOK, map[string]any{"data": payload})
 }
 
 func (s *server) handleDeletePostAPI(w http.ResponseWriter, r *http.Request) {
@@ -143,8 +147,9 @@ func (s *server) postIDFrom(w http.ResponseWriter, r *http.Request) (int64, bool
 // adminRouteMethods documents the owner-only endpoint methods so a mismatch is
 // answered as JSON with an Allow header instead of ServeMux plain text.
 var adminRouteMethods = map[string]string{
-	"/api/v1/admin/posts":   http.MethodPost,
-	"/api/v1/admin/uploads": http.MethodPost,
+	"/api/v1/admin/posts":    http.MethodPost,
+	"/api/v1/admin/uploads":  http.MethodPost,
+	"/api/v1/admin/comments": http.MethodGet,
 }
 
 // handleAdminFallback keeps every /api/v1/admin answer JSON.
@@ -159,7 +164,28 @@ func (s *server) handleAdminFallback(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "该接口不支持此请求方法")
 		return
 	}
+	if allow, ok := adminCommentRouteAllow(r.URL.Path); ok {
+		w.Header().Set("Allow", allow)
+		writeFailure(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "该接口不支持此请求方法")
+		return
+	}
 	writeFailure(w, r, http.StatusNotFound, "not_found", "请求的资源不存在")
+}
+
+// adminCommentRouteAllow maps the moderation routes to the methods they accept.
+func adminCommentRouteAllow(path string) (string, bool) {
+	rest := strings.TrimPrefix(path, "/api/v1/admin/comments/")
+	if rest == path || rest == "" {
+		return "", false
+	}
+	switch segments := strings.Split(rest, "/"); {
+	case len(segments) == 1 && segments[0] != "":
+		return http.MethodDelete, true
+	case len(segments) == 2 && (segments[1] == "approve" || segments[1] == "reject"):
+		return http.MethodPost, true
+	default:
+		return "", false
+	}
 }
 
 // isPostItemPath reports whether the path is /api/v1/admin/posts/{id}.

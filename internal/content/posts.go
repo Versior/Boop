@@ -14,12 +14,16 @@ import (
 
 // postColumns is the shared projection for feed and detail reads: the row plus
 // the two counters are resolved in the same statement, so a page of posts never
-// costs a query per post.
+// costs a query per post. The comment count matches the public thread: a reply
+// whose parent is hidden is not counted either.
 const postColumns = `p.id, p.slug, p.type, p.status, p.title, p.body_markdown, p.body_html,
 	p.excerpt, p.cover_asset_id, p.location, COALESCE(p.captured_at, ''), p.seo_title, p.seo_description,
 	COALESCE(p.published_at, ''), p.created_at, p.updated_at,
 	(SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id),
-	(SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id AND c.status = 'approved' AND c.deleted_at IS NULL)`
+	(SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id AND c.status = 'approved' AND c.deleted_at IS NULL
+		AND (c.parent_id IS NULL OR EXISTS(
+			SELECT 1 FROM comments parent
+			WHERE parent.id = c.parent_id AND parent.status = 'approved' AND parent.deleted_at IS NULL)))`
 
 // Create stores a new post owned by ownerID: slug allocation, the row itself,
 // its asset links and its tags all happen in one transaction, so a rejected
@@ -237,6 +241,56 @@ func ByID(ctx context.Context, db *sql.DB, id int64) (*Post, error) {
 		return nil, err
 	}
 	return post, nil
+}
+
+// ByIDs loads published, undeleted posts by id in one statement, preserving the
+// caller's id order and skipping ids that are no longer publicly readable. The
+// bookmark list uses it, so a bookmarked post that was unpublished or deleted in
+// the meantime simply disappears instead of leaking.
+func ByIDs(ctx context.Context, db *sql.DB, ids []int64) ([]Post, error) {
+	if db == nil {
+		return nil, errors.New("content: by ids: nil database")
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, 0, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	rows, err := db.QueryContext(ctx,
+		`SELECT `+postColumns+` FROM posts p
+		 WHERE p.status = 'published' AND p.deleted_at IS NULL AND p.id IN (`+strings.Join(placeholders, ",")+`)`,
+		args...)
+	if err != nil {
+		return nil, fmt.Errorf("content: by ids query: %w", err)
+	}
+	defer rows.Close()
+
+	found := make(map[int64]Post, len(ids))
+	for rows.Next() {
+		post, err := scanPost(rows)
+		if err != nil {
+			return nil, err
+		}
+		found[post.ID] = *post
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("content: by ids rows: %w", err)
+	}
+
+	posts := make([]Post, 0, len(found))
+	for _, id := range ids {
+		if post, ok := found[id]; ok {
+			posts = append(posts, post)
+		}
+	}
+	if err := loadRelations(ctx, db, pointers(posts)); err != nil {
+		return nil, err
+	}
+	return posts, nil
 }
 
 // checkAssets verifies every referenced asset in one statement: each id must

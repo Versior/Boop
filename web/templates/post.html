@@ -35,14 +35,75 @@
         {{end}}
 
         <div class="actions">
-          <span class="action comment" aria-label="评论 {{.Card.CommentCount}} 条">
+          <a class="action comment" href="#comments" aria-label="查看 {{.Card.CommentCount}} 条评论">
             <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-comment"/></svg><span class="count">{{.Card.CommentCount}}</span>
-          </span>
-          <span class="action like" aria-label="点赞 {{.Card.LikeCount}}">
-            <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-heart"/></svg><span class="count">{{.Card.LikeCount}}</span>
-          </span>
+          </a>
+          {{template "reactionButtons" .Card}}
           <a class="action permalink" href="/">返回首页</a>
         </div>
       </div>
     </article>
+
+    <!-- ========== 评论：公开列表始终由服务端渲染，无 JS 也能阅读 ========== -->
+    <section class="comments" id="comments" aria-label="评论">
+      <h2 class="comments-title">评论 <span class="comments-count">{{.Card.CommentCount}}</span></h2>
+
+      {{if .CanComment}}
+      <form class="comment-form" data-comment-form action="/api/v1/posts/{{.Card.ID}}/comments" method="post">
+        <label class="sr-only" for="comment-text">写下你的评论</label>
+        <textarea class="comment-input" id="comment-text" data-comment-text rows="2" maxlength="2000"
+          placeholder="写下你的评论…" aria-label="写下你的评论" required></textarea>
+        <input type="hidden" data-comment-parent name="parent_id" value="">
+        <p class="comment-replying" data-comment-replying hidden>
+          正在回复 <span class="comment-reply-name" data-comment-reply-name></span>
+          <button class="comment-cancel" type="button" data-comment-cancel-reply>取消</button>
+        </p>
+        <div class="comment-bar">
+          {{if not .CommentsEnabled}}<span class="comment-closed">评论已关闭</span>{{end}}
+          <button class="comment-submit" type="submit" data-comment-submit{{if not .CommentsEnabled}} disabled{{end}}>发表评论</button>
+        </div>
+        <p class="comment-error" data-comment-error role="alert" hidden></p>
+      </form>
+      <noscript>
+        <p class="comment-note">发表评论需要 JavaScript：页面会把内容以 JSON 提交到站内接口。</p>
+      </noscript>
+      {{else}}
+      <p class="comment-note">登录后可以评论、回复、点赞和收藏。<a href="/login">去登录</a></p>
+      {{end}}
+
+      {{if .Comments}}
+      <ul class="comment-list">
+        {{range .Comments}}{{template "commentItem" .}}{{end}}
+      </ul>
+      {{else}}
+      <p class="comment-note">还没有公开评论。</p>
+      {{end}}
+    </section>
+{{end}}
+
+{{define "commentItem"}}
+        <li class="comment" id="c{{.ID}}">
+          <span class="avatar avatar-sm" aria-hidden="true"><svg viewBox="0 0 48 48"><use href="#i-avatar"/></svg></span>
+          <div class="comment-body">
+            <div class="comment-head">
+              <span class="name">{{.Author}}</span>
+              <time datetime="{{.Datetime}}">{{.TimeLabel}}</time>
+              {{if eq .Status "pending"}}<span class="chip chip-pending">审核中</span>{{end}}
+            </div>
+            <p class="comment-text">{{.Body}}</p>
+            <div class="comment-actions">
+              {{if .CanReply}}
+              <button class="comment-action" type="button" data-comment-reply-to="{{.ID}}" data-comment-reply-name="{{.Author}}">回复</button>
+              {{end}}
+              {{if .CanDelete}}
+              <button class="comment-action danger" type="button" data-comment-delete="{{.ID}}">删除</button>
+              {{end}}
+            </div>
+            {{if .Replies}}
+            <ul class="comment-replies">
+              {{range .Replies}}{{template "commentItem" .}}{{end}}
+            </ul>
+            {{end}}
+          </div>
+        </li>
 {{end}}

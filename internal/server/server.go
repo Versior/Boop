@@ -15,6 +15,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"boop/internal/config"
 	"boop/internal/store"
@@ -29,10 +30,11 @@ const (
 )
 
 type server struct {
-	cfg    config.Config
-	db     *sql.DB
-	logger *slog.Logger
-	pages  map[string]*template.Template
+	cfg      config.Config
+	db       *sql.DB
+	logger   *slog.Logger
+	pages    map[string]*template.Template
+	limiters *limiters
 }
 
 // New builds the Boop HTTP handler. It panics only when the embedded templates
@@ -51,13 +53,13 @@ func newServer(cfg config.Config, db *sql.DB, logger *slog.Logger) (*server, err
 	if err != nil {
 		return nil, err
 	}
-	return &server{cfg: cfg, db: db, logger: logger, pages: pages}, nil
+	return &server{cfg: cfg, db: db, logger: logger, pages: pages, limiters: newLimiters(time.Now)}, nil
 }
 
 // parsePages builds one isolated template set per page so pages cannot leak
 // definitions into each other.
 func parsePages() (map[string]*template.Template, error) {
-	names := []string{"home", "post", "login", "register"}
+	names := []string{"home", "post", "login", "register", "bookmarks", "admin_comments"}
 	pages := make(map[string]*template.Template, len(names))
 	for _, name := range names {
 		tmpl, err := template.New(name).ParseFS(web.FS, "templates/base.html", "templates/"+name+".html")
@@ -77,12 +79,28 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /login", s.handleLoginPage)
 	mux.HandleFunc("GET /register", s.handleRegisterPage)
 	mux.HandleFunc("GET /p/{slug}", s.handlePostPage)
+	mux.HandleFunc("GET /bookmarks", s.handleBookmarksPage)
+	mux.HandleFunc("GET /admin/comments", s.handleAdminCommentsPage)
 	mux.HandleFunc("GET /api/v1/posts", s.handlePostsAPI)
 	mux.HandleFunc("GET /api/v1/posts/{slug}", s.handlePostAPI)
+	mux.HandleFunc("GET /api/v1/posts/{slug}/comments", s.handleCommentsAPI)
+	mux.HandleFunc("POST /api/v1/posts/{id}/comments", s.handleCreateCommentAPI)
+	mux.HandleFunc("PUT /api/v1/posts/{id}/like", s.handleLikeAPI(true))
+	mux.HandleFunc("DELETE /api/v1/posts/{id}/like", s.handleLikeAPI(false))
+	mux.HandleFunc("PUT /api/v1/posts/{id}/bookmark", s.handleBookmarkAPI(true))
+	mux.HandleFunc("DELETE /api/v1/posts/{id}/bookmark", s.handleBookmarkAPI(false))
+	mux.HandleFunc("DELETE /api/v1/comments/{id}", s.handleDeleteCommentAPI)
+	mux.HandleFunc("/api/v1/comments/", s.handleCommentsFallback)
+	mux.HandleFunc("GET /api/v1/me/bookmarks", s.handleBookmarksAPI)
+	mux.HandleFunc("/api/v1/me/", s.handleMeFallback)
 	mux.HandleFunc("/api/v1/posts/", s.handlePostsFallback)
 	mux.HandleFunc("POST /api/v1/admin/posts", s.handleCreatePostAPI)
 	mux.HandleFunc("PATCH /api/v1/admin/posts/{id}", s.handlePatchPostAPI)
 	mux.HandleFunc("DELETE /api/v1/admin/posts/{id}", s.handleDeletePostAPI)
+	mux.HandleFunc("GET /api/v1/admin/comments", s.handleAdminCommentsAPI)
+	mux.HandleFunc("POST /api/v1/admin/comments/{id}/approve", s.handleApproveCommentAPI)
+	mux.HandleFunc("POST /api/v1/admin/comments/{id}/reject", s.handleRejectCommentAPI)
+	mux.HandleFunc("DELETE /api/v1/admin/comments/{id}", s.handleAdminDeleteCommentAPI)
 	mux.HandleFunc("/api/v1/admin/", s.handleAdminFallback)
 	mux.HandleFunc("POST /api/v1/auth/register", s.handleRegisterAPI)
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLoginAPI)
@@ -112,6 +130,9 @@ func (s *server) handler() http.Handler {
 type pageView struct {
 	Filter    string
 	CSRFToken string
+	// Owner is true for the signed-in owner, so the shell can offer the
+	// moderation entry without every page computing it.
+	Owner bool
 }
 
 // shellView builds the shell state of a page for the current request: the
@@ -120,6 +141,7 @@ func (s *server) shellView(r *http.Request, filter string) pageView {
 	view := pageView{Filter: filter}
 	if state, ok := authStateFrom(r.Context()); ok && state.authenticated {
 		view.CSRFToken = state.session.CSRFToken
+		view.Owner = state.user.IsOwner()
 	}
 	return view
 }

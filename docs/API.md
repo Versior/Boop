@@ -28,10 +28,25 @@
 
 密码 10–72 字节；邮箱最大 254 字符；登录与注册按 IP 和邮箱限速。所有认证失败使用相同外部错误信息。认证接口的 JSON 请求体上限为 64KiB，与 `BOOP_MAX_UPLOAD_MB` 上传预算无关，超限返回 413 `payload_too_large`。
 
+## 限速（单进程内存令牌桶）
+
+| 动作 | 键 | 突发 | 持续补充 |
+|---|---|---:|---|
+| 登录 | 客户端地址、邮箱 | 10 | 每 6 秒 1 次 |
+| 注册 | 客户端地址、邮箱 | 5 | 每 2 分钟 1 次 |
+| 评论 | 登录用户 | 5 | 每 12 秒 1 次 |
+| 评论 | 客户端地址 | 30 | 每 2 秒 1 次 |
+
+- 超限返回 429，响应头带 `Retry-After`（秒），响应体为 `{"error":{"code":"rate_limited","message":"请求过于频繁，请稍后再试"},"request_id":"...","retry_after":N}`。
+- 限额保存在进程内存，重启即清空；**同一时刻只支持一个进程**，多进程部署会使实际额度成倍。避免 key 无限增长：空闲且已回满的桶会被惰性清理（最快每秒一次扫描、每分钟最多一次实质性清理）。
+- 地址取连接对端（`RemoteAddr`），不信任可伪造的转发头；除非反向代理把真实客户端地址作为对端地址传入，否则限速按代理地址聚合。
+- AI 接口（Task 8 未实现）预留额度：突发 3、每 20 秒 1 次；目前没有任何路由使用它。
+
 ## 互动
 
 | 方法 | 路径 | 输入 | 权限 |
 |---|---|---|---|
+| GET | `/api/v1/posts/{slug}/comments` | 无 | 公开 |
 | POST | `/api/v1/posts/{id}/comments` | body,parent_id? | reader/owner |
 | DELETE | `/api/v1/comments/{id}` | 无 | 作者或 owner |
 | PUT | `/api/v1/posts/{id}/like` | 无 | reader/owner；幂等设为已点赞 |
@@ -39,6 +54,21 @@
 | PUT | `/api/v1/posts/{id}/bookmark` | 无 | reader/owner |
 | DELETE | `/api/v1/posts/{id}/bookmark` | 无 | reader/owner |
 | GET | `/api/v1/me/bookmarks?cursor=` | 无 | reader/owner |
+
+评论与互动规则：
+
+- 评论正文为纯文本（不解析 Markdown），去除首尾空白后长度需为 1–2000 字，否则 400 `invalid_body`。
+- 只允许一级回复（最大深度 2，`docs/PRODUCT.md` §5.3）。`parent_id` 必须是同一文章下、本身没有父级、且当前公开可见的评论；否则 400 `invalid_parent`（跨文章、未知 id、二级回复、以及回复待审核/已拒绝/已删除的父评论都是这一个错误码）。
+- 只能评论已发布且未删除的内容；草稿、归档与已删除内容一律 404。
+- `comments.enabled=false` 时写入返回 403 `comments_disabled`；已有公开评论仍可读取。`comments.moderation_enabled=true` 时读者的新评论为 `pending`，站长自己的评论始终 `approved`；关闭审核时均为 `approved`。
+- 公开列表只返回 `approved` 且未删除的评论，按创建时间正序，每个顶层评论带 `replies`。父评论被删除或被拒绝时，它的回复不会出现在公开列表中（即使回复本身仍是 `approved`）。
+- `DELETE /api/v1/comments/{id}` 是软删除：作者或站长可删，其它账号 403 `forbidden`，未知或已删除的评论 404，重复删除仍是 404。
+- 评论写接口的 JSON 请求体上限为 64KiB（正文另有 2000 字上限），超限返回 413 `payload_too_large`。
+- 评论响应字段：`id`、`post_id`、`parent_id`、`body`、`status`、`created_at`、`author{id,display_name,avatar_url}`、`mine`、`replies[]`；审核队列额外带 `post_title`/`post_slug`。绝不返回作者邮箱或角色。
+- 点赞与收藏都是幂等的：重复 PUT/DELETE 返回同样的最终状态。响应为 `{"post_id":N,"liked":bool,"like_count":N}` 与 `{"post_id":N,"bookmarked":bool,"bookmark_count":N}`；`like_count` 是该内容的公开点赞数，`bookmark_count` 是**当前用户**的收藏总数（收藏是私有的，不公开他人数据）。
+- 只能对已发布未删除内容点赞或收藏，否则 404。
+- `GET /api/v1/me/bookmarks` 用 `cursor=<created_at>,<post_id>` 稳定分页，默认 20、最大 50，返回 `{"data":[...],"next_cursor":"..."}`；只列出仍公开的内容，按收藏时间倒序。
+- 内容详情与信息流（SSR 与 JSON）都带当前登录用户的 `liked`、`bookmarked`；游客一律为 `false`。
 
 ## 站长内容管理
 
@@ -48,10 +78,10 @@
 | PATCH | `/api/v1/admin/posts/{id}` | 上述字段的部分更新，带 `updated_at` 乐观锁 |
 | DELETE | `/api/v1/admin/posts/{id}` | 软删除 |
 | POST | `/api/v1/admin/uploads` | multipart 单文件，字段名 `file`；jpg/png/webp/gif，默认最大 10MB |
-| GET | `/api/v1/admin/comments?status=pending` | 审核队列 |
-| POST | `/api/v1/admin/comments/{id}/approve` | 批准 |
-| POST | `/api/v1/admin/comments/{id}/reject` | 拒绝 |
-| DELETE | `/api/v1/admin/comments/{id}` | 管理删除 |
+| GET | `/api/v1/admin/comments?status=pending` | 审核队列；`status` 为 pending/approved/rejected，默认 pending，`limit` 默认 20、最大 50 |
+| POST | `/api/v1/admin/comments/{id}/approve` | 批准；重复调用幂等，未知或已删除评论 404 |
+| POST | `/api/v1/admin/comments/{id}/reject` | 拒绝；幂等同上 |
+| DELETE | `/api/v1/admin/comments/{id}` | 管理删除（软删除）；重复删除 404 |
 
 上传与图片服务：
 
@@ -80,7 +110,7 @@
 - `GET /p/{slug}` 内容详情 SSR。
 - `GET /search?q=` 搜索结果 SSR。
 - `GET /login`、`GET /register`。
-- `GET /bookmarks` 登录用户收藏。
-- `GET /admin`、`GET /admin/comments`、`GET /admin/settings` 站长页面。
+- `GET /bookmarks` 登录用户收藏；游客重定向到 `/login`。
+- `GET /admin`（Task 7）、`GET /admin/comments`、`GET /admin/settings`（Task 7）站长页面；`/admin/comments` 的游客重定向到 `/login`，普通读者得到 403 HTML 页。
 - 未知页面返回带 request_id 的统一 404；API 永远不返回 HTML 错误页。
 

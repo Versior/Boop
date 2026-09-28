@@ -1,0 +1,44 @@
+{{define "title"}}评论审核 · Boop{{end}}
+{{define "content"}}
+    <h1 class="sr-only">评论审核</h1>
+
+    <header class="page-head">
+      <h2 class="page-title">评论审核</h2>
+      <p class="page-sub">批准后评论才会出现在公开页面；拒绝会把它从公开视图移除；删除是软删除，作者的回复同时不再展示。</p>
+    </header>
+
+    <nav class="admin-tabs" aria-label="评论状态">
+      <a class="admin-tab{{if .PendingTab}} on{{end}}" href="/admin/comments?status=pending"{{if .PendingTab}} aria-current="page"{{end}}>待审核</a>
+      <a class="admin-tab{{if .ApprovedTab}} on{{end}}" href="/admin/comments?status=approved"{{if .ApprovedTab}} aria-current="page"{{end}}>已批准</a>
+      <a class="admin-tab{{if .RejectedTab}} on{{end}}" href="/admin/comments?status=rejected"{{if .RejectedTab}} aria-current="page"{{end}}>已拒绝</a>
+    </nav>
+
+    {{if .Empty}}
+    <p class="empty">这个状态下没有评论。</p>
+    {{end}}
+
+    <ul class="admin-list">
+      {{range .Comments}}
+      <li class="admin-item" data-comment-item="{{.ID}}">
+        <div class="admin-item-head">
+          <span class="name">{{.Author}}</span>
+          <time datetime="{{.Datetime}}">{{.TimeLabel}}</time>
+          <span class="chip chip-type">{{.Status}}</span>
+        </div>
+        <p class="comment-text">{{.Body}}</p>
+        <p class="admin-item-post">{{if .PostTitle}}<a href="/p/{{.PostSlug}}">{{.PostTitle}}</a>{{end}}</p>
+        <div class="admin-actions">
+          {{if ne .Status "approved"}}
+          <button class="comment-action" type="button" data-moderation="approve" data-comment-id="{{.ID}}">批准</button>
+          {{end}}
+          {{if ne .Status "rejected"}}
+          <button class="comment-action" type="button" data-moderation="reject" data-comment-id="{{.ID}}">拒绝</button>
+          {{end}}
+          <button class="comment-action danger" type="button" data-moderation="delete" data-comment-id="{{.ID}}">删除</button>
+        </div>
+      </li>
+      {{end}}
+    </ul>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden><span class="toast-msg" data-toast-message></span></div>
+{{end}}

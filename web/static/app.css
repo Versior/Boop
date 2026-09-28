@@ -21,6 +21,8 @@ html{-webkit-text-size-adjust:100%}
   --muted-2:#8b98a5;
   --accent:#1d9bf0;
   --accent-soft:rgba(29,155,240,.1);
+  --like:#f91880;
+  --like-soft:rgba(249,24,128,.1);
   --danger:#f4212e;
   --on-accent:#ffffff;
   --chip:#eff3f4;
@@ -50,6 +52,8 @@ html{-webkit-text-size-adjust:100%}
   --muted-2:#5b6065;
   --accent:#1d9bf0;
   --accent-soft:rgba(29,155,240,.16);
+  --like:#f91880;
+  --like-soft:rgba(249,24,128,.16);
   --danger:#f4212e;
   --on-accent:#ffffff;
   --chip:#202327;
@@ -268,6 +272,15 @@ h1,h2,h3,p{margin:0}
 .action:hover{color:var(--accent);background:var(--accent-soft)}
 .action.permalink{margin-left:auto;font-weight:600}
 
+/* 点赞与收藏的选中态与悬停色（移植自 V7 的 .action.like/.bookmark） */
+.action.like:hover{color:var(--like);background:var(--like-soft)}
+.action.like.is-on{color:var(--like)}
+.action.like.is-on .ic{fill:currentColor}
+.action.bookmark.is-on{color:var(--accent)}
+.action.bookmark.is-on .ic{fill:currentColor}
+button.action{border:0;background:none;font:inherit;font-size:13px;cursor:pointer}
+button.action:disabled{opacity:.6;cursor:default}
+
 .stream-more{padding:14px 16px 0;text-align:center}
 .load-more{
   display:inline-flex;align-items:center;
@@ -411,7 +424,85 @@ h1,h2,h3,p{margin:0}
   font-size:13px;font-weight:600;
 }
 
-/* ---------- 7.4 轻提示 ---------- */
+/* ---------- 7.4 评论 ---------- */
+.comments{padding:var(--pad);border-top:1px solid var(--line)}
+.comments-title{font-size:17px;font-weight:800;letter-spacing:-.01em}
+.comments-count{color:var(--muted);font-weight:600}
+.comment-form{margin-top:12px}
+.comment-input{
+  display:block;width:100%;min-height:56px;resize:vertical;
+  padding:10px 12px;border:1px solid var(--line-strong);border-radius:var(--r-md);
+  background:var(--bg);color:var(--ink);caret-color:var(--accent);
+  font:inherit;font-size:15px;line-height:1.5;
+}
+.comment-input::placeholder{color:var(--muted-2)}
+.comment-input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.comment-replying{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  margin:8px 0 0;color:var(--muted);font-size:13px;
+}
+.comment-reply-name{color:var(--accent);font-weight:600}
+.comment-cancel{
+  border:0;background:none;padding:0;
+  color:var(--muted);font:inherit;font-size:13px;cursor:pointer;text-decoration:underline;
+}
+.comment-bar{display:flex;align-items:center;gap:10px;justify-content:flex-end;margin-top:8px}
+.comment-closed{color:var(--muted);font-size:13px}
+.comment-submit{
+  display:inline-flex;align-items:center;height:34px;padding:0 16px;border:0;border-radius:999px;
+  background:var(--accent);color:var(--on-accent);
+  font:inherit;font-size:14px;font-weight:700;cursor:pointer;
+  transition:opacity .12s ease;
+}
+.comment-submit:disabled{opacity:.5;cursor:default}
+.comment-error{margin:8px 0 0;color:var(--danger);font-size:13px;line-height:1.5}
+.comment-note{margin:12px 0 0;color:var(--muted);font-size:13px;line-height:1.6}
+.comment-note a{color:var(--accent);font-weight:600}
+.comment-list{margin:14px 0 0;padding:0;list-style:none}
+.comment{display:flex;gap:10px;padding:12px 0;border-top:1px solid var(--line)}
+.comment:first-child{border-top:0}
+.avatar-sm{width:32px;height:32px}
+.comment-body{flex:1;min-width:0}
+.comment-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
+.comment-head .name{font-weight:700;color:var(--ink);font-size:14px}
+.comment-head time{color:var(--muted)}
+.chip-pending{background:var(--chip);color:var(--muted-2)}
+.comment-text{
+  margin:4px 0 0;color:var(--ink);font-size:15px;line-height:1.55;
+  white-space:pre-wrap;word-break:break-word;
+}
+.comment-actions{display:flex;align-items:center;gap:12px;margin-top:4px}
+.comment-action{
+  border:0;background:none;padding:0;
+  color:var(--muted);font:inherit;font-size:13px;font-weight:600;cursor:pointer;
+}
+.comment-action:hover{color:var(--accent)}
+.comment-action.danger:hover{color:var(--danger)}
+.comment-action:disabled{opacity:.6;cursor:default}
+.comment-replies{margin:10px 0 0;padding:0;list-style:none}
+.comment-replies .comment{padding:10px 0 0;border-top:0}
+
+/* ---------- 7.5 页面标题与站长审核 ---------- */
+.page-head{padding:var(--pad);border-bottom:1px solid var(--line)}
+.page-title{font-size:20px;font-weight:800;letter-spacing:-.01em}
+.page-sub{margin-top:4px;color:var(--muted);font-size:13px;line-height:1.55}
+.admin-tabs{display:flex;gap:4px;padding:10px var(--pad);border-bottom:1px solid var(--line)}
+.admin-tab{
+  display:inline-flex;align-items:center;height:32px;padding:0 14px;border-radius:999px;
+  color:var(--muted);font-size:14px;font-weight:600;
+}
+.admin-tab:hover{background:var(--hover);color:var(--ink)}
+.admin-tab.on{background:var(--accent-soft);color:var(--accent)}
+.admin-list{margin:0;padding:0;list-style:none}
+.admin-item{padding:var(--pad);border-bottom:1px solid var(--line)}
+.admin-item-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
+.admin-item-head .name{font-weight:700;color:var(--ink);font-size:14px}
+.admin-item-head time{color:var(--muted)}
+.admin-item-post{margin:8px 0 0;color:var(--muted);font-size:13px}
+.admin-item-post a{color:var(--accent)}
+.admin-actions{display:flex;gap:14px;margin-top:10px}
+
+/* ---------- 7.6 轻提示 ---------- */
 .toast{
   position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));z-index:40;
   transform:translate(-50%,12px);

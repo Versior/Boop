@@ -1109,6 +1109,53 @@ func TestFeedLoadsCountsAssetsAndTags(t *testing.T) {
 	}
 }
 
+// The public count must match the public thread: a reply whose parent is hidden
+// is not part of what a reader sees, so it is not counted.
+func TestCommentCountExcludesOrphanedReplies(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	post, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeMoment, Status: StatusPublished, Body: "孤儿回复"}, testNow)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	parent := insertCommentID(t, f, post.ID, f.readerID, "父评论", "approved", false)
+	insertReply(t, f, post.ID, f.readerID, parent, "approved", false)
+
+	count := func() int {
+		t.Helper()
+		loaded, err := ByID(ctx, f.db, post.ID)
+		if err != nil {
+			t.Fatalf("ByID: %v", err)
+		}
+		return loaded.CommentCount
+	}
+	if got := count(); got != 2 {
+		t.Fatalf("comment_count = %d, want the root and its reply", got)
+	}
+
+	if _, err := f.db.Exec(`UPDATE comments SET deleted_at = ?, status = 'approved' WHERE id = ?`,
+		testNow.Format(TimestampFormat), parent); err != nil {
+		t.Fatalf("delete parent: %v", err)
+	}
+	if got := count(); got != 0 {
+		t.Errorf("comment_count = %d, want 0: the reply is orphaned and invisible", got)
+	}
+
+	// A rejected parent hides its reply for the same reason.
+	other := insertCommentID(t, f, post.ID, f.readerID, "会被拒绝", "approved", false)
+	insertReply(t, f, post.ID, f.readerID, other, "approved", false)
+	if got := count(); got != 2 {
+		t.Fatalf("comment_count = %d, want the new pair", got)
+	}
+	if _, err := f.db.Exec(`UPDATE comments SET status = 'rejected' WHERE id = ?`, other); err != nil {
+		t.Fatalf("reject parent: %v", err)
+	}
+	if got := count(); got != 0 {
+		t.Errorf("comment_count = %d, want 0 under a rejected parent", got)
+	}
+}
+
 // TestFeedQueryCountIsConstant is the N+1 guard: the statement count must not
 // grow with the number of posts on the page.
 func TestFeedQueryCountIsConstant(t *testing.T) {
@@ -1243,18 +1290,53 @@ func assertValidation(t *testing.T, err error, wantCode string) {
 	}
 }
 
+// insertComment writes a comment row directly, so tests can build states the
+// public API cannot produce (rejected, deleted, orphaned replies).
 func insertComment(t *testing.T, f *testFixture, postID, userID int64, status string, deleted bool) {
+	t.Helper()
+	insertCommentID(t, f, postID, userID, "评论", status, deleted)
+}
+
+func insertCommentID(t *testing.T, f *testFixture, postID, userID int64, body, status string, deleted bool) int64 {
 	t.Helper()
 	stamp := testNow.Format(time.RFC3339)
 	var deletedAt any
 	if deleted {
 		deletedAt = stamp
 	}
-	if _, err := f.db.Exec(
+	res, err := f.db.Exec(
 		`INSERT INTO comments(post_id, user_id, body, status, created_at, updated_at, deleted_at) VALUES(?,?,?,?,?,?,?)`,
-		postID, userID, "评论", status, stamp, stamp, deletedAt); err != nil {
+		postID, userID, body, status, stamp, stamp, deletedAt)
+	if err != nil {
 		t.Fatalf("insert comment: %v", err)
 	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("comment id: %v", err)
+	}
+	return id
+}
+
+// insertReply writes a reply under an existing comment.
+func insertReply(t *testing.T, f *testFixture, postID, userID, parentID int64, status string, deleted bool) int64 {
+	t.Helper()
+	stamp := testNow.Format(time.RFC3339)
+	var deletedAt any
+	if deleted {
+		deletedAt = stamp
+	}
+	res, err := f.db.Exec(
+		`INSERT INTO comments(post_id, user_id, parent_id, body, status, created_at, updated_at, deleted_at)
+		 VALUES(?,?,?,?,?,?,?,?)`,
+		postID, userID, parentID, "回复", status, stamp, stamp, deletedAt)
+	if err != nil {
+		t.Fatalf("insert reply: %v", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("reply id: %v", err)
+	}
+	return id
 }
 
 func slugs(posts []Post) []string {

@@ -227,13 +227,18 @@ func pageLimit(limit int) (int, error) {
 
 // formatCursor encodes the feed position as <published_at,id> (docs/API.md).
 func formatCursor(post Post) string {
-	return post.PublishedAt + "," + strconv.FormatInt(post.ID, 10)
+	return EncodeCursor(post.PublishedAt, post.ID)
 }
 
-func parseCursor(cursor string) (string, int64, error) {
-	if cursor == "" {
-		return "", 0, nil
-	}
+// EncodeCursor renders the documented list cursor <stamp>,<id>. Both the post
+// feed and the bookmark list use it, so pagination reads the same everywhere.
+func EncodeCursor(stamp string, id int64) string {
+	return stamp + "," + strconv.FormatInt(id, 10)
+}
+
+// DecodeCursor parses a list cursor and rejects anything malformed, so a
+// hand-written cursor is an explicit 400 instead of a silent empty page.
+func DecodeCursor(cursor string) (string, int64, error) {
 	at, idPart, found := strings.Cut(cursor, ",")
 	if !found {
 		return "", 0, invalid("invalid_cursor", "游标格式不正确")
@@ -246,4 +251,11 @@ func parseCursor(cursor string) (string, int64, error) {
 		return "", 0, invalid("invalid_cursor", "游标格式不正确")
 	}
 	return at, id, nil
+}
+
+func parseCursor(cursor string) (string, int64, error) {
+	if cursor == "" {
+		return "", 0, nil
+	}
+	return DecodeCursor(cursor)
 }

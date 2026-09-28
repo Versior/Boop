@@ -1,0 +1,22 @@
+{{define "title"}}我的收藏 · Boop{{end}}
+{{define "content"}}
+    <h1 class="sr-only">我的收藏</h1>
+
+    <header class="page-head">
+      <h2 class="page-title">我的收藏</h2>
+      <p class="page-sub">这里只显示仍然公开的内容；被站长删除或撤下的内容不会出现。</p>
+    </header>
+
+    <div class="stream" id="stream">
+      {{if .Empty}}
+      <p class="empty">还没有收藏。在内容详情页点一下书签图标即可收藏。</p>
+      {{end}}
+      {{range .Posts}}{{template "feedCard" .}}{{end}}
+    </div>
+
+    {{if .LoadMoreURL}}
+    <p class="stream-more"><a class="load-more" href="{{.LoadMoreURL}}">加载更多</a></p>
+    {{end}}
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden><span class="toast-msg" data-toast-message></span></div>
+{{end}}

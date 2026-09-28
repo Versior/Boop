@@ -56,6 +56,40 @@
     return meta ? meta.getAttribute('content') : '';
   }
 
+  /* 所有写请求共用的 JSON 封装：带 CSRF、同源 Cookie，401 直接去登录页。 */
+  function apiRequest(path, method, body) {
+    var headers = {};
+    var token = csrfToken();
+    if (token) { headers['X-CSRF-Token'] = token; }
+    if (body !== undefined) { headers['Content-Type'] = 'application/json'; }
+
+    return fetch(path, {
+      method: method,
+      credentials: 'same-origin',
+      headers: headers,
+      body: body === undefined ? undefined : JSON.stringify(body)
+    }).then(function (response) {
+      return response.json().catch(function () { return null; }).then(function (payload) {
+        if (response.status === 401) {
+          /* 会话已失效：去登录页比留一个无提示的按钮更清楚。 */
+          window.location.assign('/login');
+          throw new Error('请先登录');
+        }
+        if (response.status === 429 && payload && payload.retry_after) {
+          throw new Error(errorText(payload, '请求过于频繁') + '（' + payload.retry_after + ' 秒后可重试）');
+        }
+        if (!response.ok) {
+          throw new Error(errorText(payload, '请求失败（' + response.status + '）'));
+        }
+        return payload ? payload.data : null;
+      });
+    });
+  }
+
+  function reloadSoon() {
+    window.setTimeout(function () { window.location.reload(); }, 700);
+  }
+
   function errorText(payload, fallback) {
     if (payload && payload.error && payload.error.message) { return payload.error.message; }
     return fallback;
@@ -359,6 +393,147 @@
     applyMode(mode);
   }
 
+  /* 互动：点赞、收藏、评论、回复、删除与站长审核。全部走真实接口，不复制模板。 */
+  function wireReactions() {
+    var buttons = Array.prototype.slice.call(document.querySelectorAll('[data-reaction]'));
+    buttons.forEach(function (button) {
+      button.addEventListener('click', function () {
+        if (button.disabled) { return; }
+        var kind = button.getAttribute('data-reaction');
+        var postID = button.getAttribute('data-post-id');
+        /* data-on 是服务端渲染的真实状态，点击就是它的反操作。 */
+        var next = button.getAttribute('data-on') !== 'true';
+        button.disabled = true;
+
+        apiRequest('/api/v1/posts/' + postID + '/' + kind, next ? 'PUT' : 'DELETE').then(function (data) {
+          var on = kind === 'like' ? data.liked : data.bookmarked;
+          applyReaction(button, on, kind === 'like' ? data.like_count : null);
+        }).catch(function (error) {
+          if (!window.location.pathname) { return; }
+          showToast(error.message || '操作失败，请稍后重试。');
+        }).then(function () {
+          button.disabled = false;
+        });
+      });
+    });
+  }
+
+  function applyReaction(button, on, count) {
+    button.setAttribute('data-on', on ? 'true' : 'false');
+    button.setAttribute('aria-pressed', on ? 'true' : 'false');
+    if (on) { button.classList.add('is-on'); } else { button.classList.remove('is-on'); }
+    var counter = button.querySelector('[data-reaction-count]');
+    /* 收藏数是当前用户的私有总数，不写进卡片。 */
+    if (counter && typeof count === 'number') { counter.textContent = String(count); }
+  }
+
+  function wireCommentForm() {
+    var form = document.querySelector('[data-comment-form]');
+    if (!form) { return; }
+
+    var text = form.querySelector('[data-comment-text]');
+    var parentField = form.querySelector('[data-comment-parent]');
+    var submit = form.querySelector('[data-comment-submit]');
+    var errorBox = form.querySelector('[data-comment-error]');
+    var replying = form.querySelector('[data-comment-replying]');
+    var replyName = form.querySelector('[data-comment-reply-name]');
+    var cancel = form.querySelector('[data-comment-cancel-reply]');
+
+    function show(message) {
+      if (!errorBox) { return; }
+      errorBox.textContent = message;
+      errorBox.hidden = false;
+    }
+
+    function startReply(id, name) {
+      parentField.value = id;
+      if (replyName) { replyName.textContent = name; }
+      if (replying) { replying.hidden = false; }
+      text.focus();
+    }
+
+    function stopReply() {
+      parentField.value = '';
+      if (replying) { replying.hidden = true; }
+    }
+
+    if (cancel) { cancel.addEventListener('click', stopReply); }
+    Array.prototype.forEach.call(document.querySelectorAll('[data-comment-reply-to]'), function (button) {
+      button.addEventListener('click', function () {
+        startReply(button.getAttribute('data-comment-reply-to'), button.getAttribute('data-comment-reply-name'));
+      });
+    });
+
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      if (errorBox) { errorBox.hidden = true; }
+      var body = text.value.trim();
+      if (!body) { show('请先写下内容再提交。'); return; }
+
+      var payload = { body: body };
+      if (parentField && parentField.value) { payload.parent_id = Number(parentField.value); }
+      submit.disabled = true;
+
+      apiRequest(form.getAttribute('action'), 'POST', payload).then(function (data) {
+        stopReply();
+        text.value = '';
+        showToast(data && data.status === 'pending' ? '评论已提交，等待站长审核' : '评论已发布');
+        reloadSoon();
+      }).catch(function (error) {
+        show(error.message || '评论失败，请稍后重试。');
+        submit.disabled = false;
+      });
+    });
+  }
+
+  function wireCommentDeletes() {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-comment-delete]'), function (button) {
+      button.addEventListener('click', function () {
+        if (!window.confirm('确定删除这条评论吗？')) { return; }
+        button.disabled = true;
+        apiRequest('/api/v1/comments/' + button.getAttribute('data-comment-delete'), 'DELETE').then(function () {
+          showToast('评论已删除');
+          reloadSoon();
+        }).catch(function (error) {
+          button.disabled = false;
+          showToast(error.message || '删除失败，请稍后重试。');
+        });
+      });
+    });
+  }
+
+  function wireModeration() {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-moderation]'), function (button) {
+      button.addEventListener('click', function () {
+        var action = button.getAttribute('data-moderation');
+        var id = button.getAttribute('data-comment-id');
+        if (action === 'delete' && !window.confirm('确定删除这条评论吗？')) { return; }
+
+        var endpoint = '/api/v1/admin/comments/' + id;
+        var method = 'DELETE';
+        if (action === 'approve' || action === 'reject') {
+          endpoint += '/' + action;
+          method = 'POST';
+        }
+        button.disabled = true;
+        apiRequest(endpoint, method).then(function () {
+          showToast('已' + ({ approve: '批准', reject: '拒绝', delete: '删除' }[action] || '处理'));
+          reloadSoon();
+        }).catch(function (error) {
+          button.disabled = false;
+          showToast(error.message || '操作失败，请稍后重试。');
+        });
+      });
+    });
+  }
+
+  function wireSocial() {
+    wireReactions();
+    wireCommentForm();
+    wireCommentDeletes();
+    wireModeration();
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
     Array.prototype.forEach.call(document.querySelectorAll('[data-theme-toggle]'), function (btn) {
       btn.addEventListener('click', function () {
@@ -368,5 +543,6 @@
 
     Array.prototype.forEach.call(document.querySelectorAll('[data-auth-form]'), wireAuthForm);
     wireComposer();
+    wireSocial();
   });
 })();

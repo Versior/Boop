@@ -13,6 +13,7 @@ import (
 
 	"boop/internal/content"
 	"boop/internal/settings"
+	"boop/internal/social"
 )
 
 // uploadsPrefix is the public path of stored assets. Task 5 writes files under
@@ -31,6 +32,9 @@ var typeLabels = map[string]string{
 	content.TypePhoto:   "摄影",
 }
 
+// navBookmarksFilter marks the 收藏 section as current in the shell.
+const navBookmarksFilter = "bookmarks"
+
 type assetPayload struct {
 	ID       int64  `json:"id"`
 	URL      string `json:"url"`
@@ -41,24 +45,28 @@ type assetPayload struct {
 }
 
 type postPayload struct {
-	ID           int64          `json:"id"`
-	Slug         string         `json:"slug"`
-	Type         string         `json:"type"`
-	Status       string         `json:"status"`
-	Title        string         `json:"title"`
-	Body         string         `json:"body"`
-	BodyHTML     string         `json:"body_html"`
-	Excerpt      string         `json:"excerpt"`
-	URL          string         `json:"url"`
-	Location     string         `json:"location"`
-	CapturedAt   string         `json:"captured_at"`
-	PublishedAt  string         `json:"published_at"`
-	CreatedAt    string         `json:"created_at"`
-	UpdatedAt    string         `json:"updated_at"`
-	LikeCount    int            `json:"like_count"`
-	CommentCount int            `json:"comment_count"`
-	Tags         []string       `json:"tags"`
-	Assets       []assetPayload `json:"assets"`
+	ID           int64  `json:"id"`
+	Slug         string `json:"slug"`
+	Type         string `json:"type"`
+	Status       string `json:"status"`
+	Title        string `json:"title"`
+	Body         string `json:"body"`
+	BodyHTML     string `json:"body_html"`
+	Excerpt      string `json:"excerpt"`
+	URL          string `json:"url"`
+	Location     string `json:"location"`
+	CapturedAt   string `json:"captured_at"`
+	PublishedAt  string `json:"published_at"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+	LikeCount    int    `json:"like_count"`
+	CommentCount int    `json:"comment_count"`
+	// Liked and Bookmarked describe the signed-in reader; they stay false for
+	// guests, who have no state on the server.
+	Liked      bool           `json:"liked"`
+	Bookmarked bool           `json:"bookmarked"`
+	Tags       []string       `json:"tags"`
+	Assets     []assetPayload `json:"assets"`
 }
 
 func postPayloadOf(post content.Post) postPayload {
@@ -90,6 +98,7 @@ func postPayloadOf(post content.Post) postPayload {
 
 // postCard is the server-rendered feed item.
 type postCard struct {
+	ID            int64
 	Type          string
 	TypeLabel     string
 	Title         string
@@ -105,6 +114,14 @@ type postCard struct {
 	Location      string
 	CapturedLabel string
 	Tags          []string
+	// Liked, Bookmarked and CanReact drive the interaction buttons: guests get a
+	// sign-in link instead of a write control.
+	Liked      bool
+	Bookmarked bool
+	CanReact   bool
+	// OwnerName is the single author shown on every card, so the shared card
+	// template needs no page context.
+	OwnerName string
 }
 
 // feedView drives the home page: the cards, the cursor that continues them and
@@ -134,6 +151,11 @@ type postPageView struct {
 	CapturedLabel string
 	OwnerName     string
 	OwnerAvatar   string
+	// Comment thread and interaction state. The form and its reply controls are
+	// rendered only for signed-in readers (docs/PRODUCT.md §3).
+	Comments        []commentView
+	CommentsEnabled bool
+	CanComment      bool
 }
 
 // handleHome renders the public feed. A signed-in owner additionally gets the
@@ -172,15 +194,25 @@ func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
 		Empty:        len(page.Posts) == 0,
 		ComposerMode: composerMode(filter),
 	}
+	// One batched query resolves the reader's likes and bookmarks for the page.
+	states := s.viewerStates(r.Context(), r, postIDs(page.Posts))
+	viewer := s.socialViewer(r)
+	view.OwnerName, view.OwnerAvatar = s.ownerIdentity(r.Context())
 	for _, post := range page.Posts {
-		view.Posts = append(view.Posts, s.cardOf(post, location))
+		card := s.cardOf(post, location)
+		card.CanReact = viewer.signedIn
+		card.OwnerName = view.OwnerName
+		if state, ok := states[post.ID]; ok {
+			card.Liked = state.Liked
+			card.Bookmarked = state.Bookmarked
+		}
+		view.Posts = append(view.Posts, card)
 	}
 	if page.NextCursor != "" {
 		view.NextCursor = page.NextCursor
 		view.LoadMoreURL = feedURL(filter, page.NextCursor)
 	}
-	view.OwnerName, view.OwnerAvatar = s.ownerIdentity(r.Context())
-	if state, ok := authStateFrom(r.Context()); ok && state.authenticated && state.user.IsOwner() {
+	if viewer.owner {
 		view.Composer = true
 	}
 	s.render(w, r, http.StatusOK, "home", view)
@@ -201,13 +233,28 @@ func (s *server) handlePostPage(w http.ResponseWriter, r *http.Request) {
 		values = settings.Defaults()
 	}
 	card := s.cardOf(*post, loadLocation(values.SiteTimezone))
+	viewer := s.socialViewer(r)
+	card.CanReact = viewer.signedIn
+	states := s.viewerStates(r.Context(), r, []int64{post.ID})
+	if state, ok := states[post.ID]; ok {
+		card.Liked = state.Liked
+		card.Bookmarked = state.Bookmarked
+	}
+	thread, err := social.Comments(r.Context(), s.db, post.ID, viewer.userID)
+	if err != nil {
+		s.writeSocialFailure(w, r, "post page comments", err)
+		return
+	}
 	view := postPageView{
-		pageView: s.shellView(r, filterOf(post.Type)),
-		Card:     card,
-		Title:    post.Title,
-		Body:     template.HTML(post.BodyHTML), //nolint:gosec // body_html is sanitized at write time
-		FullHTML: true,
-		Tags:     post.Tags,
+		pageView:        s.shellView(r, filterOf(post.Type)),
+		Card:            card,
+		Title:           post.Title,
+		Body:            template.HTML(post.BodyHTML), //nolint:gosec // body_html is sanitized at write time
+		FullHTML:        true,
+		Tags:            post.Tags,
+		Comments:        s.commentViewsOf(thread, loadLocation(values.SiteTimezone), viewer),
+		CommentsEnabled: values.CommentsEnabled,
+		CanComment:      viewer.signedIn,
 	}
 	view.OwnerName, view.OwnerAvatar = s.ownerIdentity(r.Context())
 	if view.Title == "" {
@@ -244,8 +291,11 @@ func (s *server) handlePostsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload := make([]postPayload, 0, len(page.Posts))
+	states := s.viewerStates(r.Context(), r, postIDs(page.Posts))
 	for _, post := range page.Posts {
-		payload = append(payload, postPayloadOf(post))
+		item := postPayloadOf(post)
+		applyViewerState(&item, states)
+		payload = append(payload, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": payload, "next_cursor": page.NextCursor})
 }
@@ -257,17 +307,65 @@ func (s *server) handlePostAPI(w http.ResponseWriter, r *http.Request) {
 		s.writeContentFailure(w, r, "post api", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": postPayloadOf(*post)})
+	payload := postPayloadOf(*post)
+	applyViewerState(&payload, s.viewerStates(r.Context(), r, []int64{post.ID}))
+	writeJSON(w, http.StatusOK, map[string]any{"data": payload})
 }
 
-// handlePostsFallback keeps every /api/v1/posts answer JSON.
+// handlePostsFallback keeps every /api/v1/posts answer JSON. A sub-path that no
+// handler matched is answered with the method it does support, and an unknown
+// sub-path is a plain 404, so ServeMux never gets to print plain text.
 func (s *server) handlePostsFallback(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/api/v1/posts/" || strings.HasSuffix(r.URL.Path, "/") {
+	segments := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/posts/"), "/"), "/")
+	allow := ""
+	switch {
+	case r.URL.Path == "/api/v1/posts/" || strings.HasSuffix(r.URL.Path, "/"):
+	case len(segments) == 1 && segments[0] != "":
+		// One slug or id: only the read route exists for it.
+		allow = http.MethodGet
+	case len(segments) == 2:
+		allow, _ = postSubRouteAllow(segments[1])
+	}
+	if allow == "" {
 		writeFailure(w, r, http.StatusNotFound, "not_found", "请求的资源不存在")
 		return
 	}
-	w.Header().Set("Allow", http.MethodGet)
+	w.Header().Set("Allow", allow)
 	writeFailure(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "该接口不支持此请求方法")
+}
+
+// postSubRouteAllow maps the interaction sub-route of one post to the methods
+// it accepts.
+func postSubRouteAllow(verb string) (string, bool) {
+	switch verb {
+	case "comments":
+		return http.MethodGet + ", " + http.MethodPost, true
+	case "like", "bookmark":
+		return http.MethodPut + ", " + http.MethodDelete, true
+	default:
+		return "", false
+	}
+}
+
+// handleCommentsFallback answers method mismatches under /api/v1/comments.
+func (s *server) handleCommentsFallback(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/comments/")
+	if rest == "" || strings.Contains(rest, "/") {
+		writeFailure(w, r, http.StatusNotFound, "not_found", "请求的资源不存在")
+		return
+	}
+	w.Header().Set("Allow", http.MethodDelete)
+	writeFailure(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "该接口不支持此请求方法")
+}
+
+// handleMeFallback answers method mismatches under /api/v1/me.
+func (s *server) handleMeFallback(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/api/v1/me/bookmarks" {
+		w.Header().Set("Allow", http.MethodGet)
+		writeFailure(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "该接口不支持此请求方法")
+		return
+	}
+	writeFailure(w, r, http.StatusNotFound, "not_found", "请求的资源不存在")
 }
 
 // writeContentFailure maps a content error onto the documented envelope.
@@ -290,6 +388,7 @@ func (s *server) writeContentFailure(w http.ResponseWriter, r *http.Request, ope
 // cardOf projects a stored post into the feed item the templates render.
 func (s *server) cardOf(post content.Post, location *time.Location) postCard {
 	card := postCard{
+		ID:           post.ID,
 		Type:         post.Type,
 		TypeLabel:    typeLabels[post.Type],
 		Title:        post.Title,

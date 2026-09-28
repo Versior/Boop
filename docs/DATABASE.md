@@ -168,12 +168,13 @@ CREATE VIRTUAL TABLE post_search USING fts5(
 
 ## 约束与事务规则
 
-- 创建评论时校验父评论属于同一文章，且父评论本身没有父级。
+- 创建评论时在同一个事务里校验：内容已发布且未删除，父评论属于同一文章、本身没有父级、且当前为 `approved`（回复隐藏的父评论会让附件评论不可达）。
 - 发布 `photo` 必须在同一事务中确认至少一个属于当前 owner 且为图片 MIME 的 `assets` 行。
 - 本地上传按 `(owner_user_id, sha256)` 去重：相同字节只保留一行 asset 和一个文件，由 `idx_assets_owner_hash` 唯一索引保证（迁移 003），不依赖应用层的查询时序。
 - 发布 `article` 必须有标题和正文；发布 `moment` 必须有正文。
 - `cover_asset_id` 在迁移 002 中通过触发器或应用事务校验属于当前文章，不建立会造成建表顺序循环的外键。
-- 点赞、收藏使用 `INSERT ... ON CONFLICT DO NOTHING` 与 `DELETE`，响应返回最终状态和计数。
+- 点赞、收藏使用 `INSERT ... ON CONFLICT DO NOTHING` 与 `DELETE`，响应返回最终状态和计数。收藏是私有的：返回的计数是当前用户自己的收藏总数。
+- 删除或拒绝父评论后，其回复仍是 `approved` 数据，但公开列表不会展示孤儿回复（写作时判定的可见性以父评论为准）。
 - FTS 索引由 posts 的 insert/update/delete 触发器同步；软删除内容不得进入搜索结果。
 - 迁移文件一经发布不可修改，只能追加新版本。
 
