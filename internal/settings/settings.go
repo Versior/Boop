@@ -26,12 +26,14 @@ const (
 	maxSiteNameRunes    = 80
 	maxDescriptionRunes = 280
 	maxModelNameRunes   = 200
+	maxAvatarURLRunes   = 2048
 )
 
 // Setting keys as stored in the settings table.
 const (
 	KeySiteName                  = "site.name"
 	KeySiteDescription           = "site.description"
+	KeySiteAvatarURL             = "site.avatar_url"
 	KeySiteTimezone              = "site.timezone"
 	KeyContentPageSize           = "content.page_size"
 	KeyAuthRegistrationEnabled   = "auth.registration_enabled"
@@ -46,7 +48,9 @@ const (
 
 // Secret keys live in the secret_settings table and are encrypted with
 // BOOP_MASTER_KEY (docs/PRODUCT.md §5.4, docs/DATABASE.md). They are never
-// returned by an API and never appear in a log line.
+// returned by an API and never appear in a log line. Every ciphertext is also
+// bound to the key it belongs to as GCM additional data, so a row copied onto
+// another key cannot be decrypted.
 const (
 	SecretKeyGitHubClientID     = "github.client_id"
 	SecretKeyGitHubClientSecret = "github.client_secret"
@@ -87,6 +91,7 @@ func knownSecretKey(key string) bool {
 type Values struct {
 	SiteName                  string
 	SiteDescription           string
+	SiteAvatarURL             string
 	SiteTimezone              string
 	PageSize                  int
 	RegistrationEnabled       bool
@@ -104,6 +109,7 @@ func Defaults() Values {
 	return Values{
 		SiteName:                  "Boop",
 		SiteDescription:           "遇事开心的个人博客",
+		SiteAvatarURL:             "",
 		SiteTimezone:              "Asia/Shanghai",
 		PageSize:                  20,
 		RegistrationEnabled:       true,
@@ -227,7 +233,10 @@ type Update struct {
 }
 
 // Apply validates and writes one settings change. Without BOOP_MASTER_KEY a
-// secret change fails with ErrMasterKeyRequired rather than storing plaintext.
+// secret write fails with ErrMasterKeyRequired rather than storing plaintext;
+// clearing a secret only deletes a row, so it never needs the master key and
+// stays idempotent. A request that both writes and clears is still a secret
+// write and fails as a whole when the key is missing.
 func Apply(ctx context.Context, db *sql.DB, box *secretbox.Box, update Update) error {
 	if db == nil {
 		return errors.New("settings: apply: nil database")
@@ -245,10 +254,8 @@ func Apply(ctx context.Context, db *sql.DB, box *secretbox.Box, update Update) e
 			return fmt.Errorf("%w: %v", ErrInvalidValue, err)
 		}
 	}
-	if len(update.Secrets) > 0 || len(update.Clear) > 0 {
-		if box == nil {
-			return ErrMasterKeyRequired
-		}
+	if len(update.Secrets) > 0 && box == nil {
+		return ErrMasterKeyRequired
 	}
 	for key, value := range update.Secrets {
 		if !knownSecretKey(key) {
@@ -272,7 +279,7 @@ func Apply(ctx context.Context, db *sql.DB, box *secretbox.Box, update Update) e
 	type sealed struct{ nonce, ciphertext []byte }
 	sealedSecrets := make(map[string]sealed, len(update.Secrets))
 	for key, value := range update.Secrets {
-		nonce, ciphertext, err := box.Seal(value)
+		nonce, ciphertext, err := box.Seal(key, value)
 		if err != nil {
 			return fmt.Errorf("settings: apply: encrypt %s: %w", key, err)
 		}
@@ -320,7 +327,8 @@ const upsertSecretSQL = `INSERT INTO secret_settings(key, nonce, ciphertext, upd
 
 // ReadSecret decrypts one stored secret. A missing master key, an unknown key
 // and a missing row are separate answers, so a caller can tell an unconfigured
-// site from a broken one.
+// site from a broken one. The ciphertext is bound to its setting key, so a row
+// that was copied from another key fails to decrypt.
 func ReadSecret(ctx context.Context, db *sql.DB, box *secretbox.Box, key string) (string, error) {
 	if db == nil {
 		return "", errors.New("settings: read secret: nil database")
@@ -340,7 +348,7 @@ func ReadSecret(ctx context.Context, db *sql.DB, box *secretbox.Box, key string)
 	if err != nil {
 		return "", fmt.Errorf("settings: read secret %s: %w", key, err)
 	}
-	value, err := box.Open(nonce, ciphertext)
+	value, err := box.Open(key, nonce, ciphertext)
 	if err != nil {
 		return "", fmt.Errorf("settings: read secret %s: %w", key, err)
 	}
@@ -387,6 +395,12 @@ func validate(key string, value any) error {
 		return validateText(key, value, 1, maxSiteNameRunes)
 	case KeySiteDescription:
 		return validateText(key, value, 0, maxDescriptionRunes)
+	case KeySiteAvatarURL:
+		avatar, err := requireString(key, value)
+		if err != nil {
+			return err
+		}
+		return validateAvatarURL(key, avatar)
 	case KeyAIChatModel, KeyAIEmbeddingModel:
 		return validateText(key, value, 0, maxModelNameRunes)
 	case KeySiteTimezone:
@@ -482,11 +496,38 @@ func validateBaseURL(key, raw string) error {
 	return nil
 }
 
+// validateAvatarURL accepts an empty value (the built-in placeholder is used)
+// or an absolute http(s) URL without credentials and within a sane length, so
+// one setting can never render an off-scheme or unbounded resource reference.
+func validateAvatarURL(key, raw string) error {
+	if raw == "" {
+		return nil
+	}
+	if utf8.RuneCountInString(raw) > maxAvatarURLRunes {
+		return fmt.Errorf("settings: set: %s must be at most %d characters", key, maxAvatarURLRunes)
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("settings: set: %s %q is not a URL", key, raw)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("settings: set: %s %q must use http or https", key, raw)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("settings: set: %s %q has no host", key, raw)
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("settings: set: %s must not contain credentials", key)
+	}
+	return nil
+}
+
 // fieldsOf maps each known key to the matching field of values.
 func fieldsOf(values *Values) map[string]any {
 	return map[string]any{
 		KeySiteName:                  &values.SiteName,
 		KeySiteDescription:           &values.SiteDescription,
+		KeySiteAvatarURL:             &values.SiteAvatarURL,
 		KeySiteTimezone:              &values.SiteTimezone,
 		KeyContentPageSize:           &values.PageSize,
 		KeyAuthRegistrationEnabled:   &values.RegistrationEnabled,

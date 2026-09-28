@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"boop/internal/auth"
+	"boop/internal/secretbox"
 	"boop/internal/settings"
 )
 
@@ -147,6 +150,143 @@ func configuredGitHubFixture(t *testing.T) *githubFixture {
 	return f
 }
 
+// githubEntryMarker is the GitHub sign-in entry the two auth pages share.
+const githubEntryMarker = `href="/auth/github/start?return_to=%2F"`
+
+// TestAuthPagesOfferTheSameGitHubEntry pins the entry rules: the sign-in page and
+// the registration page render the same link whenever the stored client pair
+// works, and closing public registration keeps it on the registration page so an
+// already bound GitHub account can still sign in.
+func TestAuthPagesOfferTheSameGitHubEntry(t *testing.T) {
+	f := configuredGitHubFixture(t)
+
+	for _, target := range []string{"/login", "/register"} {
+		rec := f.do(t, http.MethodGet, target, "", nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200", target, rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, githubEntryMarker) {
+			t.Errorf("%s does not offer the GitHub entry", target)
+		}
+		if !strings.Contains(body, "使用 GitHub 登录") {
+			t.Errorf("%s does not label the GitHub entry", target)
+		}
+	}
+
+	f.updateSettings(t, settings.KeyAuthRegistrationEnabled, false)
+	rec := f.do(t, http.MethodGet, "/register", "", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("closed register page: status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "已关闭公开注册") {
+		t.Error("the closed registration state is not rendered")
+	}
+	if !strings.Contains(body, githubEntryMarker) {
+		t.Error("the GitHub entry disappeared when registration was closed")
+	}
+}
+
+// TestGitHubEntryIsHiddenWhenTheStoredPairIsUnusable covers the health rule: the
+// entry is only offered when both stored values actually decrypt and are
+// non-empty, so a wrong master key or a half-configured site hides it and
+// /auth/github/start fails safely.
+func TestGitHubEntryIsHiddenWhenTheStoredPairIsUnusable(t *testing.T) {
+	ctx := t.Context()
+
+	t.Run("wrong master key", func(t *testing.T) {
+		f := newSettingsFixture(t)
+		// The rows are written with another key: they are intact for whoever wrote
+		// them and unreadable for this process.
+		other, err := secretbox.New(bytes.Repeat([]byte{9}, secretbox.KeyBytes))
+		if err != nil {
+			t.Fatalf("secretbox.New: %v", err)
+		}
+		if err := settings.Apply(ctx, f.db, other, settings.Update{Secrets: map[string]string{
+			settings.SecretKeyGitHubClientID:     settingsClientID,
+			settings.SecretKeyGitHubClientSecret: settingsClientSecret,
+		}}); err != nil {
+			t.Fatalf("store the pair with another key: %v", err)
+		}
+
+		var logs bytes.Buffer
+		f.srv.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+
+		for _, target := range []string{"/login", "/register"} {
+			rec := f.do(t, http.MethodGet, target, "", nil, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s: status = %d, want 200", target, rec.Code)
+			}
+			if strings.Contains(rec.Body.String(), githubEntryMarker) {
+				t.Errorf("%s still offers the GitHub entry", target)
+			}
+		}
+
+		rec := f.do(t, http.MethodGet, "/auth/github/start", "", nil, nil)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("start: status = %d, want 500: %s", rec.Code, rec.Body.String())
+		}
+		// This is a browser navigation, so the answer is the shared status page.
+		if !strings.Contains(rec.Body.String(), "服务器内部错误") {
+			t.Errorf("start: body = %q", rec.Body.String())
+		}
+		for _, secret := range []string{settingsClientID, settingsClientSecret, f.cfg.MasterKey} {
+			if strings.Contains(rec.Body.String(), secret) {
+				t.Error("the failed start leaked a stored value")
+			}
+		}
+		for _, cookie := range rec.Result().Cookies() {
+			if cookie.Name == sessionCookieID && cookie.Value != "" {
+				t.Error("a failed start issued a session")
+			}
+		}
+		if links := f.countRows(t, "oauth_accounts"); links != 0 {
+			t.Errorf("oauth_accounts = %d, want none", links)
+		}
+
+		// The hidden entry is recorded without echoing any stored value.
+		logged := logs.String()
+		if !strings.Contains(logged, "github sign-in entry hidden") {
+			t.Errorf("no redacted warning was logged: %s", logged)
+		}
+		for _, secret := range []string{settingsClientID, settingsClientSecret, f.cfg.MasterKey} {
+			if strings.Contains(logged, secret) {
+				t.Error("the warning leaked a stored value")
+			}
+		}
+	})
+
+	t.Run("only half the pair stored", func(t *testing.T) {
+		f := newSettingsFixture(t)
+		if err := settings.Apply(ctx, f.db, settingsBox(t, f), settings.Update{
+			Secrets: map[string]string{settings.SecretKeyGitHubClientID: settingsClientID},
+		}); err != nil {
+			t.Fatalf("store the client id: %v", err)
+		}
+		for _, target := range []string{"/login", "/register"} {
+			rec := f.do(t, http.MethodGet, target, "", nil, nil)
+			if strings.Contains(rec.Body.String(), githubEntryMarker) {
+				t.Errorf("%s offers the entry with only half the pair", target)
+			}
+		}
+		rec := f.do(t, http.MethodGet, "/auth/github/start", "", nil, nil)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("start: status = %d, want 503: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("no master key", func(t *testing.T) {
+		f := newAuthFixture(t)
+		for _, target := range []string{"/login", "/register"} {
+			rec := f.do(t, http.MethodGet, target, "", nil, nil)
+			if strings.Contains(rec.Body.String(), githubEntryMarker) {
+				t.Errorf("%s offers the entry without a master key", target)
+			}
+		}
+	})
+}
+
 func TestGitHubStartRequiresConfiguration(t *testing.T) {
 	t.Run("no master key", func(t *testing.T) {
 		f := newAuthFixture(t)
@@ -169,6 +309,37 @@ func TestGitHubStartRequiresConfiguration(t *testing.T) {
 			t.Errorf("body = %q", rec.Body.String())
 		}
 	})
+}
+
+// TestGitHubFailureMapping pins the documented answers for the callback
+// failures, including the link conflict: an identity that belongs to another
+// account is refused instead of being turned into a session.
+func TestGitHubFailureMapping(t *testing.T) {
+	srv := testServer(t, discardLogger())
+
+	for _, tt := range []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{"link conflict", auth.ErrGitHubLinkConflict, http.StatusConflict, "oauth_conflict"},
+		{"unverified email", auth.ErrEmailUnverified, http.StatusForbidden, "email_unverified"},
+		{"disabled account", auth.ErrAccountDisabled, http.StatusForbidden, "account_disabled"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := withRequestID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				srv.writeGitHubFailure(w, r, "github sign-in", tt.err)
+			}))
+			rec := do(t, handler, http.MethodGet, "/api/v1/auth/me", nil)
+			if rec.Code != tt.status {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tt.status, rec.Body.String())
+			}
+			if code, _, _ := decodeAPIError(t, rec); code != tt.code {
+				t.Errorf("code = %q, want %q", code, tt.code)
+			}
+		})
+	}
 }
 
 func TestGitHubStartRedirectsWithAStateBoundToTheBrowser(t *testing.T) {

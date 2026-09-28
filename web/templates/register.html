@@ -25,5 +25,8 @@
   {{else}}
   <p class="auth-hint">站点当前已关闭公开注册。已有账号可以<a href="/login">直接登录</a>。</p>
   {{end}}
+
+  <!-- GitHub 入口与登录页完全一致；关闭公开注册后仍然显示，供已绑定的账号登录。 -->
+  {{if .GitHubEnabled}}{{template "githubLogin" .}}{{end}}
 </section>
 {{end}}

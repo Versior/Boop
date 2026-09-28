@@ -58,7 +58,7 @@ Boop 是面向个人站长的轻量自托管博客：公开页面保留 X/Twitte
 
 ### 5.4 AI
 
-- OpenAI-compatible 配置：Base URL、模型、API Key、超时；密钥使用 `BOOP_MASTER_KEY` 经 AES-GCM 加密后入库。
+- OpenAI-compatible 配置：Base URL、模型、API Key、超时；密钥使用 `BOOP_MASTER_KEY` 经 AES-GCM 加密后入库。每条密文以它自己的 settings key 作为 additional data 绑定，因此密文只能解回原 setting，换 key 或换行都会认证失败。
 - 作者状态：访问首页时读取缓存。缓存超过 7 天且存在更新内容时，单飞后台刷新；刷新失败继续返回旧值；没有旧值时返回手写默认状态，不阻塞首页。
 - 文章助手：生成摘要、标签建议、SEO 标题和描述，不自动覆盖编辑器内容。
 - 语义搜索与站内问答属于 v0.2：先以 SQLite FTS5/关键词检索作为可用基线；只有配置了 embedding 模型时启用向量增强。
@@ -68,7 +68,7 @@ Boop 是面向个人站长的轻量自托管博客：公开页面保留 X/Twitte
 
 - 注册开关。
 - 评论总开关与评论审核开关。
-- 站点名称、简介、头像、时区、每页条数。
+- 站点名称、简介、头像、时区、每页条数。名称与头像会真实用于页面品牌（标题后缀、导航品牌、搜索占位、首页文案）与内容头像，头像留空时依次回退到站长账号头像、内置图标。
 - GitHub OAuth Client ID/Secret。
 - AI Base URL、模型、加密 API Key、状态缓存天数。
 - 上传目录、单文件大小和允许的 MIME 类型由环境变量控制，不在网页端任意改路径。

@@ -324,6 +324,79 @@ func TestGitHubSignInLinksAnExistingAccount(t *testing.T) {
 	}
 }
 
+// TestLinkGitHubAccountReusesOnlyItsOwnUser covers the unique-violation path: a
+// concurrent request may link the same GitHub account first, and only the
+// account this sign-in resolved to may reuse that link. A link that points at
+// another account is a conflict, so the caller rolls back instead of signing the
+// wrong user in.
+func TestLinkGitHubAccountReusesOnlyItsOwnUser(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	first := newReader(t, db, "first@example.com", "甲")
+	second := newReader(t, db, "second@example.com", "乙")
+	identity := githubIdentity(t, "4242", "first@example.com", true)
+	stamp := timestamp(time.Now())
+
+	// The link the concurrent request would have committed first.
+	withTx := func(run func(tx *sql.Tx) error) error {
+		t.Helper()
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatalf("BeginTx: %v", err)
+		}
+		defer tx.Rollback()
+		if err := run(tx); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+		return nil
+	}
+	if err := withTx(func(tx *sql.Tx) error {
+		return linkGitHubAccount(ctx, tx, first.ID, identity, stamp)
+	}); err != nil {
+		t.Fatalf("first link: %v", err)
+	}
+
+	// The same account links idempotently: the row is reused, not duplicated.
+	if err := withTx(func(tx *sql.Tx) error {
+		return linkGitHubAccount(ctx, tx, first.ID, identity, stamp)
+	}); err != nil {
+		t.Fatalf("idempotent link: %v", err)
+	}
+	if links := countRows(t, db, "oauth_accounts"); links != 1 {
+		t.Fatalf("oauth_accounts = %d, want 1", links)
+	}
+
+	// A different account must never take over the identity.
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	linkErr := linkGitHubAccount(ctx, tx, second.ID, identity, stamp)
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if !errors.Is(linkErr, ErrGitHubLinkConflict) {
+		t.Fatalf("link for another user: error = %v, want ErrGitHubLinkConflict", linkErr)
+	}
+
+	// Nothing changed: the identity still belongs to the first account and the
+	// second account has no link at all.
+	var owner int64
+	if err := db.QueryRow(`SELECT user_id FROM oauth_accounts WHERE provider = ? AND provider_user_id = ?`,
+		githubProvider, identity.ProviderUserID).Scan(&owner); err != nil {
+		t.Fatalf("read the link: %v", err)
+	}
+	if owner != first.ID {
+		t.Errorf("link owner = %d, want %d", owner, first.ID)
+	}
+	if links := countRows(t, db, "oauth_accounts"); links != 1 {
+		t.Errorf("oauth_accounts = %d, want the conflict to add none", links)
+	}
+}
+
 // TestGitHubSignInWithRegistrationDisabled covers the documented rule that
 // closing public registration keeps existing accounts usable.
 func TestGitHubSignInWithRegistrationDisabled(t *testing.T) {

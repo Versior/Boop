@@ -20,10 +20,14 @@ const (
 	authContextKey
 )
 
-// contentSecurityPolicy allows only same-origin assets: templates and scripts
-// must never need inline code, so no nonce or unsafe-inline escape hatch exists.
+// contentSecurityPolicy allows only same-origin scripts, styles and connections:
+// templates and scripts must never need inline code, so no nonce or
+// unsafe-inline escape hatch exists. Images are the one exception: the site
+// avatar (site.avatar_url) and the owner account avatar are absolute http(s)
+// URLs the operator configures, so a page that renders them needs those origins
+// to be loadable.
 const contentSecurityPolicy = "default-src 'self'; base-uri 'none'; object-src 'none'; " +
-	"frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; " +
+	"frame-ancestors 'none'; form-action 'self'; img-src 'self' data: http: https:; " +
 	"style-src 'self'; script-src 'self'; connect-src 'self'"
 
 // withRequestID assigns a correlation id to every request and echoes it.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -143,7 +144,7 @@ func TestPatchSettingsUpdatesValues(t *testing.T) {
 	login := f.login(t, owner.Email, authPassword, nil)
 	cookie, csrf := sessionCookie(t, login), decodeData(t, login)["csrf_token"].(string)
 
-	rec := f.patchSettings(t, `{"site_name":"少爷的博客","site_description":"海边","site_timezone":"UTC",
+	rec := f.patchSettings(t, `{"site_name":"少爷的博客","site_description":"海边","site_avatar_url":"https://cdn.example.com/avatar.png","site_timezone":"UTC",
 		"page_size":42,"registration_enabled":false,"comments_enabled":false,"comments_moderation_enabled":true,
 		"ai_enabled":true,"ai_base_url":"https://api.example.com/v1","ai_chat_model":"gpt-4o-mini",
 		"ai_embedding_model":"text-embedding-3-small","ai_author_status_ttl_hours":24}`, cookie, csrf)
@@ -154,6 +155,7 @@ func TestPatchSettingsUpdatesValues(t *testing.T) {
 	for key, want := range map[string]any{
 		"site_name":                   "少爷的博客",
 		"site_description":            "海边",
+		"site_avatar_url":             "https://cdn.example.com/avatar.png",
 		"site_timezone":               "UTC",
 		"page_size":                   float64(42),
 		"registration_enabled":        false,
@@ -228,6 +230,9 @@ func TestPatchSettingsRejectsUnknownFieldsAndValues(t *testing.T) {
 		{"wrong type", `{"page_size":"20"}`, http.StatusBadRequest, "invalid_body"},
 		{"blank site name", `{"site_name":"   "}`, http.StatusBadRequest, "invalid_settings"},
 		{"unknown timezone", `{"site_timezone":"Mars/Olympus"}`, http.StatusBadRequest, "invalid_settings"},
+		{"relative avatar", `{"site_avatar_url":"/avatar.png"}`, http.StatusBadRequest, "invalid_settings"},
+		{"avatar with a wrong scheme", `{"site_avatar_url":"javascript:alert(1)"}`, http.StatusBadRequest, "invalid_settings"},
+		{"avatar with credentials", `{"site_avatar_url":"https://user:pass@example.com/a.png"}`, http.StatusBadRequest, "invalid_settings"},
 		{"unknown secret to clear", `{"clear_secret":["github.nope"]}`, http.StatusBadRequest, "invalid_settings"},
 		{"not an object", `[]`, http.StatusBadRequest, "invalid_body"},
 		{"trailing content", `{"site_name":"a"}{"site_name":"b"}`, http.StatusBadRequest, "invalid_body"},
@@ -340,8 +345,9 @@ func TestPatchSettingsKeepsAnEmptySecretAndClearsOnRequest(t *testing.T) {
 	}
 }
 
-// TestPatchSettingsWithoutMasterKeyFailsClosed covers the documented rule that a
-// missing BOOP_MASTER_KEY never results in a plaintext secret.
+// TestPatchSettingsWithoutMasterKeyFailsClosed covers the documented rules: a
+// missing BOOP_MASTER_KEY never results in a plaintext secret, and clearing a
+// stored secret needs no key because it only deletes a row.
 func TestPatchSettingsWithoutMasterKeyFailsClosed(t *testing.T) {
 	f := newAuthFixture(t)
 	if err := settings.Seed(t.Context(), f.db); err != nil {
@@ -353,11 +359,11 @@ func TestPatchSettingsWithoutMasterKeyFailsClosed(t *testing.T) {
 
 	for _, body := range []string{
 		`{"github_client_secret":"` + settingsClientSecret + `"}`,
-		`{"clear_secret":["github.client_secret"]}`,
+		`{"clear_secret":["github.client_secret"],"ai_api_key":"` + settingsAPIKey + `"}`,
 	} {
 		rec := f.patchSettings(t, body, cookie, csrf)
 		if rec.Code != http.StatusConflict {
-			t.Fatalf("status = %d, want 409: %s", rec.Code, rec.Body.String())
+			t.Fatalf("body %s: status = %d, want 409: %s", body, rec.Code, rec.Body.String())
 		}
 		if code, _, _ := decodeAPIError(t, rec); code != "master_key_required" {
 			t.Errorf("code = %q, want master_key_required", code)
@@ -370,9 +376,179 @@ func TestPatchSettingsWithoutMasterKeyFailsClosed(t *testing.T) {
 		t.Errorf("master_key = %#v, want false", data["master_key"])
 	}
 
+	// Clearing is a delete: without a master key it still succeeds, and repeating
+	// it is harmless.
+	for i := 0; i < 2; i++ {
+		rec := f.patchSettings(t, `{"clear_secret":["github.client_secret","ai.api_key"]}`, cookie, csrf)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("clear attempt %d: status = %d, want 200: %s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+
 	// Non-secret settings stay editable without a master key.
 	if rec := f.patchSettings(t, `{"site_name":"没有主密钥也能改"}`, cookie, csrf); rec.Code != http.StatusOK {
 		t.Errorf("non-secret write: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestPublishedBrandComesFromSettings is the end-to-end brand check: after a
+// PATCH the rendered home page carries the new name, description and avatar, and
+// no user-visible surface still shows the built-in name.
+func TestPublishedBrandComesFromSettings(t *testing.T) {
+	f := newSettingsFixture(t)
+	owner := f.bootstrapOwner(t, "owner@example.com", "遇事开心")
+	login := f.login(t, owner.Email, authPassword, nil)
+	cookie, csrf := sessionCookie(t, login), decodeData(t, login)["csrf_token"].(string)
+
+	const avatarURL = "https://cdn.example.com/site-avatar.png"
+	rec := f.patchSettings(t, `{"site_name":"少爷的博客","site_description":"海边的个人博客","site_avatar_url":"`+avatarURL+`"}`, cookie, csrf)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch: status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	home := f.do(t, http.MethodGet, "/", "", nil, cookie)
+	if home.Code != http.StatusOK {
+		t.Fatalf("home: status = %d, want 200", home.Code)
+	}
+	body := home.Body.String()
+	for _, want := range []string{
+		"<title>少爷的博客</title>",
+		`<meta name="description" content="海边的个人博客">`,
+		`<link rel="icon" href="` + avatarURL + `">`,
+		`<span class="brand-name">少爷的博客</span>`,
+		`aria-label="少爷的博客 首页"`,
+		`<label class="sr-only" for="rail-search-input">搜索 少爷的博客</label>`,
+		`placeholder="搜索 少爷的博客"`,
+		"少爷的博客 首页",
+		"少爷的博客 上只有站长会发布内容",
+		`<img class="avatar-img" src="` + avatarURL + `"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the home page is missing %s", want)
+		}
+	}
+	// The configured name replaced the built-in one everywhere on this page.
+	if strings.Contains(body, "Boop") {
+		t.Error("the home page still renders the built-in brand name")
+	}
+	// The other HTML pages take the same brand.
+	for _, target := range []string{"/login", "/register"} {
+		page := f.do(t, http.MethodGet, target, "", nil, nil)
+		if page.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200", target, page.Code)
+		}
+		if !strings.Contains(page.Body.String(), "<title>少爷的博客</title>") {
+			t.Errorf("%s does not use the configured site name in its title", target)
+		}
+	}
+}
+
+// TestAuthorAvatarFallback pins the documented order: the configured site avatar
+// wins, an empty setting falls back to the owner account, and with neither the
+// built-in SVG is rendered.
+func TestAuthorAvatarFallback(t *testing.T) {
+	f := newSettingsFixture(t)
+	owner := f.bootstrapOwner(t, "owner@example.com", "遇事开心")
+	login := f.login(t, owner.Email, authPassword, nil)
+	cookie, csrf := sessionCookie(t, login), decodeData(t, login)["csrf_token"].(string)
+
+	const (
+		siteAvatar  = "https://cdn.example.com/site-avatar.png"
+		ownerAvatar = "https://cdn.example.com/owner-avatar.png"
+	)
+	setAvatar := func(value string) {
+		t.Helper()
+		rec := f.patchSettings(t, `{"site_avatar_url":"`+value+`"}`, cookie, csrf)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("patch site_avatar_url: status = %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+	home := func() string {
+		t.Helper()
+		rec := f.do(t, http.MethodGet, "/", "", nil, cookie)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("home: status = %d, want 200", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	setAvatar(siteAvatar)
+	if body := home(); !strings.Contains(body, siteAvatar) {
+		t.Error("the configured site avatar is not rendered")
+	}
+
+	// An empty setting falls back to the owner account's avatar.
+	if _, err := f.db.Exec(`UPDATE users SET avatar_url = ? WHERE id = ?`, ownerAvatar, owner.ID); err != nil {
+		t.Fatalf("set the owner avatar: %v", err)
+	}
+	setAvatar("")
+	body := home()
+	if !strings.Contains(body, ownerAvatar) {
+		t.Error("the owner account avatar is not used as the fallback")
+	}
+	if strings.Contains(body, siteAvatar) {
+		t.Error("the cleared site avatar is still rendered")
+	}
+
+	// With neither avatar the built-in SVG keeps the layout intact.
+	if _, err := f.db.Exec(`UPDATE users SET avatar_url = '' WHERE id = ?`, owner.ID); err != nil {
+		t.Fatalf("clear the owner avatar: %v", err)
+	}
+	body = home()
+	if !strings.Contains(body, `href="#i-avatar"`) {
+		t.Error("the built-in avatar placeholder is missing")
+	}
+	if strings.Contains(body, `class="avatar-img"`) {
+		t.Error("an image avatar is rendered without any configured URL")
+	}
+}
+
+// TestConfiguredAvatarRendersOnEveryContentSurface walks the four documented
+// places: the quick publisher, a feed card, a bookmark card and the detail page.
+func TestConfiguredAvatarRendersOnEveryContentSurface(t *testing.T) {
+	f := newContentFixture(t)
+	const avatarURL = "https://cdn.example.com/site-avatar.png"
+
+	post := f.createOK(t, map[string]any{"type": "moment", "status": "published", "body": "海边的下午"})
+	slug := post["slug"].(string)
+	postID := int64(post["id"].(float64))
+
+	patch := f.do(t, http.MethodPatch, "/api/v1/admin/settings",
+		`{"site_avatar_url":"`+avatarURL+`"}`,
+		map[string]string{"Origin": testOrigin, "X-CSRF-Token": f.csrf}, f.cookie)
+	if patch.Code != http.StatusOK {
+		t.Fatalf("patch site_avatar_url: status = %d: %s", patch.Code, patch.Body.String())
+	}
+	marker := `<img class="avatar-img" src="` + avatarURL + `"`
+
+	home := f.do(t, http.MethodGet, "/", "", nil, f.cookie)
+	if home.Code != http.StatusOK {
+		t.Fatalf("home: status = %d, want 200", home.Code)
+	}
+	// The owner's session renders both the quick publisher and the feed card.
+	if got := strings.Count(home.Body.String(), marker); got != 2 {
+		t.Errorf("the home page renders %d configured avatars, want 2 (composer and card)", got)
+	}
+
+	detail := f.do(t, http.MethodGet, "/p/"+slug, "", nil, f.cookie)
+	if detail.Code != http.StatusOK {
+		t.Fatalf("detail: status = %d, want 200", detail.Code)
+	}
+	if !strings.Contains(detail.Body.String(), marker) {
+		t.Error("the detail page does not render the configured avatar")
+	}
+
+	bookmark := f.do(t, http.MethodPut, fmt.Sprintf("/api/v1/posts/%d/bookmark", postID), "",
+		map[string]string{"Origin": testOrigin, "X-CSRF-Token": f.csrf}, f.cookie)
+	if bookmark.Code != http.StatusOK {
+		t.Fatalf("bookmark: status = %d, want 200: %s", bookmark.Code, bookmark.Body.String())
+	}
+	list := f.do(t, http.MethodGet, "/bookmarks", "", nil, f.cookie)
+	if list.Code != http.StatusOK {
+		t.Fatalf("bookmarks: status = %d, want 200", list.Code)
+	}
+	if !strings.Contains(list.Body.String(), marker) {
+		t.Error("the bookmark card does not render the configured avatar")
 	}
 }
 
@@ -423,6 +599,8 @@ func TestAdminSettingsPageAndIndex(t *testing.T) {
 			`data-settings-form`,
 			`data-settings-action="/api/v1/admin/settings"`,
 			`name="site_name"`,
+			`name="site_description"`,
+			`name="site_avatar_url"`,
 			`name="page_size"`,
 			`name="registration_enabled"`,
 			`name="ai_api_key"`,

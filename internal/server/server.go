@@ -20,6 +20,7 @@ import (
 	"boop/internal/auth"
 	"boop/internal/config"
 	"boop/internal/secretbox"
+	"boop/internal/settings"
 	"boop/internal/store"
 	"boop/web"
 )
@@ -165,17 +166,49 @@ type pageView struct {
 	// Owner is true for the signed-in owner, so the shell can offer the
 	// moderation entry without every page computing it.
 	Owner bool
+	// SiteName, SiteDescription and SiteAvatarURL are the configured brand of the
+	// site. Every page renders them (title suffix, brand, aria labels, search
+	// placeholder, meta description), so no user-visible surface hardcodes a name.
+	SiteName        string
+	SiteDescription string
+	SiteAvatarURL   string
 }
 
 // shellView builds the shell state of a page for the current request: the
 // navigation filter plus the session CSRF token when the visitor is signed in.
+// It reads the settings itself; a page that already loaded them avoids the
+// second read with shellViewWithSettings.
 func (s *server) shellView(r *http.Request, filter string) pageView {
-	view := pageView{Filter: filter}
+	return s.shellViewWithSettings(r, filter, s.displaySettings(r))
+}
+
+// shellViewWithSettings is the minimal shell state for a caller that has already
+// read the settings, so a render path never queries them twice.
+func (s *server) shellViewWithSettings(r *http.Request, filter string, values settings.Values) pageView {
+	view := pageView{
+		Filter:          filter,
+		SiteName:        values.SiteName,
+		SiteDescription: values.SiteDescription,
+		SiteAvatarURL:   values.SiteAvatarURL,
+	}
 	if state, ok := authStateFrom(r.Context()); ok && state.authenticated {
 		view.CSRFToken = state.session.CSRFToken
 		view.Owner = state.user.IsOwner()
 	}
 	return view
+}
+
+// displaySettings reads the settings for a page that must still render: a failed
+// read degrades to the documented defaults with a warning instead of hiding the
+// page behind a 500.
+func (s *server) displaySettings(r *http.Request) settings.Values {
+	values, err := settings.Load(r.Context(), s.db)
+	if err != nil {
+		s.logger.LogAttrs(r.Context(), slog.LevelWarn, "settings unavailable, using defaults",
+			slog.String("error", err.Error()), slog.String("request_id", requestIDFrom(r.Context())))
+		return settings.Defaults()
+	}
+	return values
 }
 
 // handleHealthz reports process liveness and never touches external systems.
@@ -290,7 +323,7 @@ func writeStatusPage(w http.ResponseWriter, status int, message, requestID strin
 	body := "<!doctype html>\n<html lang=\"zh-CN\"><head><meta charset=\"utf-8\">" +
 		"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
 		"<meta name=\"color-scheme\" content=\"light dark\">" +
-		"<title>" + escape(http.StatusText(status)) + " · Boop</title>" +
+		"<title>" + escape(http.StatusText(status)) + "</title>" +
 		"<link rel=\"stylesheet\" href=\"/static/app.css\"></head><body>" +
 		"<main class=\"status-page\"><h1>" + escape(http.StatusText(status)) + "</h1>" +
 		"<p>" + escape(message) + "</p>" +

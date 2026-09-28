@@ -119,9 +119,10 @@ type postCard struct {
 	Liked      bool
 	Bookmarked bool
 	CanReact   bool
-	// OwnerName is the single author shown on every card, so the shared card
-	// template needs no page context.
-	OwnerName string
+	// OwnerName and OwnerAvatar are the single author shown on every card, so the
+	// shared card template needs no page context.
+	OwnerName   string
+	OwnerAvatar string
 }
 
 // feedView drives the home page: the cards, the cursor that continues them and
@@ -168,14 +169,8 @@ func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, r, http.StatusBadRequest, "invalid_type", "该内容筛选类型不存在")
 		return
 	}
-	values, err := settings.Load(r.Context(), s.db)
-	if err != nil {
-		// Display path: fall back to the documented defaults and record the
-		// failure rather than hiding the feed behind a 500.
-		s.logger.LogAttrs(r.Context(), slog.LevelWarn, "settings unavailable, using defaults",
-			slog.String("error", err.Error()), slog.String("request_id", requestIDFrom(r.Context())))
-		values = settings.Defaults()
-	}
+	// One settings read serves both the site brand and the feed shape.
+	values := s.displaySettings(r)
 	location := loadLocation(values.SiteTimezone)
 
 	page, err := content.Feed(r.Context(), s.db, content.FeedOptions{
@@ -189,7 +184,7 @@ func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view := feedView{
-		pageView:     s.shellView(r, filter),
+		pageView:     s.shellViewWithSettings(r, filter, values),
 		Posts:        make([]postCard, 0, len(page.Posts)),
 		Empty:        len(page.Posts) == 0,
 		ComposerMode: composerMode(filter),
@@ -197,11 +192,12 @@ func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
 	// One batched query resolves the reader's likes and bookmarks for the page.
 	states := s.viewerStates(r.Context(), r, postIDs(page.Posts))
 	viewer := s.socialViewer(r)
-	view.OwnerName, view.OwnerAvatar = s.ownerIdentity(r.Context())
+	view.OwnerName, view.OwnerAvatar = s.authorIdentity(r.Context(), values)
 	for _, post := range page.Posts {
 		card := s.cardOf(post, location)
 		card.CanReact = viewer.signedIn
 		card.OwnerName = view.OwnerName
+		card.OwnerAvatar = view.OwnerAvatar
 		if state, ok := states[post.ID]; ok {
 			card.Liked = state.Liked
 			card.Bookmarked = state.Bookmarked
@@ -226,13 +222,9 @@ func (s *server) handlePostPage(w http.ResponseWriter, r *http.Request) {
 		s.writeContentFailure(w, r, "post page", err)
 		return
 	}
-	values, err := settings.Load(r.Context(), s.db)
-	if err != nil {
-		s.logger.LogAttrs(r.Context(), slog.LevelWarn, "settings unavailable, using defaults",
-			slog.String("error", err.Error()), slog.String("request_id", requestIDFrom(r.Context())))
-		values = settings.Defaults()
-	}
-	card := s.cardOf(*post, loadLocation(values.SiteTimezone))
+	values := s.displaySettings(r)
+	location := loadLocation(values.SiteTimezone)
+	card := s.cardOf(*post, location)
 	viewer := s.socialViewer(r)
 	card.CanReact = viewer.signedIn
 	states := s.viewerStates(r.Context(), r, []int64{post.ID})
@@ -245,18 +237,21 @@ func (s *server) handlePostPage(w http.ResponseWriter, r *http.Request) {
 		s.writeSocialFailure(w, r, "post page comments", err)
 		return
 	}
+	ownerName, ownerAvatar := s.authorIdentity(r.Context(), values)
+	card.OwnerName, card.OwnerAvatar = ownerName, ownerAvatar
 	view := postPageView{
-		pageView:        s.shellView(r, filterOf(post.Type)),
+		pageView:        s.shellViewWithSettings(r, filterOf(post.Type), values),
 		Card:            card,
 		Title:           post.Title,
 		Body:            template.HTML(post.BodyHTML), //nolint:gosec // body_html is sanitized at write time
 		FullHTML:        true,
 		Tags:            post.Tags,
-		Comments:        s.commentViewsOf(thread, loadLocation(values.SiteTimezone), viewer),
+		Comments:        s.commentViewsOf(thread, location, viewer),
 		CommentsEnabled: values.CommentsEnabled,
 		CanComment:      viewer.signedIn,
+		OwnerName:       ownerName,
+		OwnerAvatar:     ownerAvatar,
 	}
-	view.OwnerName, view.OwnerAvatar = s.ownerIdentity(r.Context())
 	if view.Title == "" {
 		view.Title = firstLine(post.BodyMarkdown)
 	}
@@ -501,4 +496,15 @@ func (s *server) ownerIdentity(ctx context.Context) (name, avatar string) {
 		return "站长", ""
 	}
 	return name, storedAvatar.String
+}
+
+// authorIdentity resolves the identity published content is attributed to: the
+// owner account plus the avatar the design shows. A configured site avatar wins
+// over the account avatar, and an empty result keeps the built-in SVG.
+func (s *server) authorIdentity(ctx context.Context, values settings.Values) (name, avatar string) {
+	name, avatar = s.ownerIdentity(ctx)
+	if values.SiteAvatarURL != "" {
+		avatar = values.SiteAvatarURL
+	}
+	return name, avatar
 }

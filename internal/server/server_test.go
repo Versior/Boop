@@ -99,6 +99,11 @@ func TestSecurityHeadersOnEveryResponse(t *testing.T) {
 			if got := rec.Header().Get("Referrer-Policy"); got != "strict-origin-when-cross-origin" {
 				t.Errorf("Referrer-Policy = %q", got)
 			}
+			// The configured site avatar is an absolute URL, so remote images must be
+			// loadable; everything else stays same-origin only.
+			if !strings.Contains(csp, "img-src 'self' data: http: https:") {
+				t.Errorf("CSP %q does not allow the configured avatar origins", csp)
+			}
 			if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
 				t.Errorf("X-Frame-Options = %q, want DENY", got)
 			}

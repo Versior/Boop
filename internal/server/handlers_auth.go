@@ -447,14 +447,23 @@ func (s *server) handleRegisterPage(w http.ResponseWriter, r *http.Request) {
 	values, err := settings.Load(r.Context(), s.db)
 	if err != nil {
 		// Fail closed: without readable settings the page must not offer a form
-		// whose submission would be rejected anyway.
+		// whose submission would be rejected anyway. The brand falls back to the
+		// documented defaults so the page still renders.
 		s.logger.LogAttrs(r.Context(), slog.LevelError, "registration settings unavailable",
 			slog.String("error", err.Error()), slog.String("request_id", requestIDFrom(r.Context())))
 		enabled = false
+		values = settings.Defaults()
 	} else {
 		enabled = values.RegistrationEnabled
 	}
-	s.render(w, r, http.StatusOK, "register", authView{pageView: s.shellView(r, navNeutralFilter), RegistrationEnabled: enabled})
+	// The GitHub entry is offered on both auth pages whenever the stored client
+	// pair actually decrypts, and it is offered even while public registration is
+	// closed: an existing GitHub-bound account can still sign in.
+	s.render(w, r, http.StatusOK, "register", authView{
+		pageView:            s.shellViewWithSettings(r, navNeutralFilter, values),
+		RegistrationEnabled: enabled,
+		GitHubEnabled:       s.githubConfigured(r),
+	})
 }
 
 func (s *server) redirectSignedIn(w http.ResponseWriter, r *http.Request) bool {
@@ -464,21 +473,4 @@ func (s *server) redirectSignedIn(w http.ResponseWriter, r *http.Request) bool {
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 	return true
-}
-
-// githubConfigured reports whether the GitHub sign-in link can work: the master
-// key must be configured and both stored values must exist. It never decrypts,
-// so a display path can ask cheaply. A failure degrades to "not offered" with a
-// warning: the sign-in page still works with the password form.
-func (s *server) githubConfigured(r *http.Request) bool {
-	if s.secrets == nil {
-		return false
-	}
-	configured, err := settings.ConfiguredSecrets(r.Context(), s.db)
-	if err != nil {
-		s.logger.LogAttrs(r.Context(), slog.LevelWarn, "secret settings unavailable",
-			slog.String("error", err.Error()), slog.String("request_id", requestIDFrom(r.Context())))
-		return false
-	}
-	return configured[settings.SecretKeyGitHubClientID] && configured[settings.SecretKeyGitHubClientSecret]
 }

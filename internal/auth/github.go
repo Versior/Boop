@@ -49,6 +49,10 @@ var (
 	// ErrEmailUnverified means GitHub did not vouch for an address, so no account
 	// may be created or bound with it.
 	ErrEmailUnverified = errors.New("auth: github email is not verified")
+	// ErrGitHubLinkConflict means the GitHub account is already linked to a
+	// different Boop account. Reusing that link would sign in the wrong account,
+	// so the whole sign-in is refused.
+	ErrGitHubLinkConflict = errors.New("auth: github account is linked to another user")
 )
 
 // GitHubAPI is the GitHub client. The base URLs and the HTTP client are fields
@@ -372,15 +376,33 @@ func resolveGitHubEmail(ctx context.Context, tx *sql.Tx, identity GitHubIdentity
 }
 
 // linkGitHubAccount records the identity. A concurrent request may have linked
-// the same GitHub account first, which leaves the existing row in place.
+// the same GitHub account first: the existing row is then only reused when it
+// already points at the account this sign-in resolved to. Anything else would
+// hand out a session for the wrong account, so it is reported as a conflict and
+// the caller's transaction rolls back.
 func linkGitHubAccount(ctx context.Context, tx *sql.Tx, userID int64, identity GitHubIdentity, stamp string) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO oauth_accounts(user_id, provider, provider_user_id, provider_login, created_at)
 		VALUES(?, ?, ?, ?, ?)`,
 		userID, githubProvider, identity.ProviderUserID, truncate(identity.Login, githubLoginMaxBytes), stamp)
-	if err == nil || store.IsUniqueViolation(err) {
+	if err == nil {
 		return nil
 	}
-	return fmt.Errorf("auth: github sign-in: link account: %w", err)
+	if !store.IsUniqueViolation(err) {
+		return fmt.Errorf("auth: github sign-in: link account: %w", err)
+	}
+
+	// Re-read inside the same transaction: only the committed link is visible,
+	// so this reports who actually owns the identity now.
+	var actualUserID int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT user_id FROM oauth_accounts WHERE provider = ? AND provider_user_id = ?`,
+		githubProvider, identity.ProviderUserID).Scan(&actualUserID); err != nil {
+		return fmt.Errorf("auth: github sign-in: re-read link: %w", err)
+	}
+	if actualUserID != userID {
+		return ErrGitHubLinkConflict
+	}
+	return nil
 }
 
 // displayNameFor picks the stored display name: the GitHub profile name, else

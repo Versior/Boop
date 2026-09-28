@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -231,23 +232,59 @@ func (s *server) allowOAuthRequest(w http.ResponseWriter, r *http.Request, scope
 	return false
 }
 
-// githubCredentials decrypts the stored OAuth client pair. A missing master key,
-// a missing half and a decrypt failure are each reported explicitly: the flow
-// never starts half configured, and no value is ever echoed.
+// githubCredentials decrypts the stored OAuth client pair for a flow that is
+// about to start. Each failure is answered explicitly: the flow never starts
+// half configured, and no value is ever echoed.
 func (s *server) githubCredentials(w http.ResponseWriter, r *http.Request) (clientID, clientSecret string, ok bool) {
-	if s.secrets == nil {
+	clientID, clientSecret, err := s.githubSecrets(r.Context())
+	if err == nil {
+		return clientID, clientSecret, true
+	}
+	if errors.Is(err, settings.ErrMasterKeyRequired) {
 		writeFailure(w, r, http.StatusServiceUnavailable, "github_unconfigured", "站点未配置 BOOP_MASTER_KEY，无法使用 GitHub 登录")
 		return "", "", false
 	}
-	clientID, err := settings.ReadSecret(r.Context(), s.db, s.secrets, settings.SecretKeyGitHubClientID)
-	if err != nil {
-		return "", "", s.writeGitHubSecretFailure(w, r, "github client id", err)
+	return "", "", s.writeGitHubSecretFailure(w, r, "github credentials", err)
+}
+
+// githubSecrets is the single place that decides whether GitHub sign-in is
+// usable: it decrypts both stored values and requires both to be non-empty. A
+// missing master key, a missing half and a damaged ciphertext are each reported
+// as an error and never as an empty client.
+func (s *server) githubSecrets(ctx context.Context) (clientID, clientSecret string, err error) {
+	if s.secrets == nil {
+		return "", "", settings.ErrMasterKeyRequired
 	}
-	clientSecret, err = settings.ReadSecret(r.Context(), s.db, s.secrets, settings.SecretKeyGitHubClientSecret)
+	clientID, err = settings.ReadSecret(ctx, s.db, s.secrets, settings.SecretKeyGitHubClientID)
 	if err != nil {
-		return "", "", s.writeGitHubSecretFailure(w, r, "github client secret", err)
+		return "", "", err
 	}
-	return clientID, clientSecret, true
+	clientSecret, err = settings.ReadSecret(ctx, s.db, s.secrets, settings.SecretKeyGitHubClientSecret)
+	if err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(clientID) == "" || strings.TrimSpace(clientSecret) == "" {
+		return "", "", fmt.Errorf("%w: stored GitHub client pair is incomplete", settings.ErrSecretNotFound)
+	}
+	return clientID, clientSecret, nil
+}
+
+// githubConfigured reports whether the GitHub sign-in entry can work. Both
+// stored values must actually decrypt and be non-empty, so a wrong master key or
+// a damaged ciphertext hides the entry instead of offering a link that would
+// fail. The check is deliberately not cached: a settings change takes effect on
+// the next page. A failure degrades to "not offered" with a redacted warning,
+// and the password form keeps working.
+func (s *server) githubConfigured(r *http.Request) bool {
+	_, _, err := s.githubSecrets(r.Context())
+	if err == nil {
+		return true
+	}
+	if !errors.Is(err, settings.ErrMasterKeyRequired) && !errors.Is(err, settings.ErrSecretNotFound) {
+		s.logger.LogAttrs(r.Context(), slog.LevelWarn, "github sign-in entry hidden",
+			slog.String("error", err.Error()), slog.String("request_id", requestIDFrom(r.Context())))
+	}
+	return false
 }
 
 func (s *server) writeGitHubSecretFailure(w http.ResponseWriter, r *http.Request, name string, err error) bool {
@@ -255,6 +292,8 @@ func (s *server) writeGitHubSecretFailure(w http.ResponseWriter, r *http.Request
 		writeFailure(w, r, http.StatusServiceUnavailable, "github_unconfigured", "站点尚未配置 GitHub 登录")
 		return false
 	}
+	// The message names the stored setting and the cipher failure only; neither
+	// the master key nor any plaintext appears in it.
 	s.logger.LogAttrs(r.Context(), slog.LevelError, name+" unavailable",
 		slog.String("error", err.Error()), slog.String("request_id", requestIDFrom(r.Context())))
 	writeFailure(w, r, http.StatusInternalServerError, "internal_error", "服务器内部错误")
@@ -277,6 +316,10 @@ func (s *server) writeGitHubFailure(w http.ResponseWriter, r *http.Request, oper
 		writeFailure(w, r, http.StatusForbidden, "registration_disabled", "站点已关闭公开注册")
 	case errors.Is(err, auth.ErrAccountDisabled):
 		writeFailure(w, r, http.StatusForbidden, "account_disabled", "该账号已被停用")
+	case errors.Is(err, auth.ErrGitHubLinkConflict):
+		// The identity belongs to another account: refusing is the only safe
+		// answer, because the alternative would sign the wrong user in.
+		writeFailure(w, r, http.StatusConflict, "oauth_conflict", "该 GitHub 账号已绑定到其他账户")
 	default:
 		s.logger.LogAttrs(r.Context(), slog.LevelError, operation+" failed",
 			slog.String("error", err.Error()), slog.String("request_id", requestIDFrom(r.Context())))

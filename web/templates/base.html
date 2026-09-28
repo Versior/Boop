@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light dark">
 {{if .CSRFToken}}<meta name="csrf-token" content="{{.CSRFToken}}">{{end}}
-<title>{{block "title" .}}Boop{{end}}</title>
+<title>{{block "title" .}}{{.SiteName}}{{end}}</title>
+{{if .SiteDescription}}<meta name="description" content="{{.SiteDescription}}">{{end}}
+{{if .SiteAvatarURL}}<link rel="icon" href="{{.SiteAvatarURL}}">{{end}}
 <link rel="stylesheet" href="/static/app.css">
 <script src="/static/app.js"></script>
 </head>
@@ -89,9 +91,9 @@
   <!-- ========== 左栏 ========== -->
   <aside class="rail-left">
     <div class="rail-top">
-      <a class="brand" href="/" aria-label="Boop 首页">
+      <a class="brand" href="/" aria-label="{{.SiteName}} 首页">
         <span class="brandmark" aria-hidden="true"><svg class="ic ic-logo" viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
-        <span class="brand-name">Boop</span>
+        <span class="brand-name">{{.SiteName}}</span>
       </a>
       <nav class="nav" aria-label="主导航">
         <a class="nav-item{{if eq .Filter ""}} on{{end}}" href="/"{{if eq .Filter ""}} aria-current="page"{{end}}>
@@ -125,9 +127,9 @@
   <main class="main">
     <header class="topbar">
       <div class="tb-row">
-        <a class="tb-brand" href="/" aria-label="Boop 首页">
+        <a class="tb-brand" href="/" aria-label="{{.SiteName}} 首页">
           <span class="brandmark" aria-hidden="true"><svg class="ic ic-logo" viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
-          <span class="brand-name">Boop</span>
+          <span class="brand-name">{{.SiteName}}</span>
         </a>
         <div class="tb-actions">
           {{if .Owner}}
@@ -153,8 +155,8 @@
   <aside class="rail-right">
     <form class="rail-search" action="/search" method="get" role="search">
       <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg>
-      <label class="sr-only" for="rail-search-input">搜索 Boop</label>
-      <input class="rail-search-input" id="rail-search-input" name="q" type="search" placeholder="搜索 Boop" autocomplete="off" maxlength="100">
+      <label class="sr-only" for="rail-search-input">搜索 {{.SiteName}}</label>
+      <input class="rail-search-input" id="rail-search-input" name="q" type="search" placeholder="搜索 {{.SiteName}}" autocomplete="off" maxlength="100">
     </form>
   </aside>
 
@@ -184,10 +186,19 @@
 </html>
 {{end}}
 
+<!-- ========== 共享模板：品牌头像 ========== -->
+<!-- 有配置或站长头像时用真实图片，否则保留内置 SVG；两者都是纯展示元素。 -->
+{{define "avatar"}}{{if .}}<span class="avatar"><img class="avatar-img" src="{{.}}" alt="" loading="lazy" decoding="async"></span>{{else}}<span class="avatar" aria-hidden="true"><svg viewBox="0 0 48 48"><use href="#i-avatar"/></svg></span>{{end}}{{end}}
+
+<!-- ========== 共享模板：GitHub 登录入口（登录页与注册页共用） ========== -->
+{{define "githubLogin"}}
+  <p class="auth-alt"><a class="auth-github" href="/auth/github/start?return_to=%2F">使用 GitHub 登录</a></p>
+{{end}}
+
 <!-- ========== 共享模板：信息流卡片（首页与收藏页共用一套标记） ========== -->
 {{define "feedCard"}}
       <article class="post" data-type="{{.Type}}">
-        <span class="avatar" aria-hidden="true"><svg viewBox="0 0 48 48"><use href="#i-avatar"/></svg></span>
+        {{template "avatar" .OwnerAvatar}}
         <div class="post-body">
           <div class="post-head">
             <span class="name">{{.OwnerName}}</span>

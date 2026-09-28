@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"boop/internal/content"
-	"boop/internal/settings"
 	"boop/internal/social"
 )
 
@@ -328,6 +327,7 @@ type bookmarkPageView struct {
 	LoadMoreURL string
 	Empty       bool
 	CanReact    bool
+	OwnerAvatar string
 }
 
 // handleBookmarksAPI lists the signed-in reader's bookmarks as JSON.
@@ -369,12 +369,7 @@ func (s *server) handleBookmarksPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, loginPath, http.StatusSeeOther)
 		return
 	}
-	values, err := settings.Load(r.Context(), s.db)
-	if err != nil {
-		s.logger.LogAttrs(r.Context(), slog.LevelWarn, "settings unavailable, using defaults",
-			slog.String("error", err.Error()), slog.String("request_id", requestIDFrom(r.Context())))
-		values = settings.Defaults()
-	}
+	values := s.displaySettings(r)
 	page, err := social.Bookmarks(r.Context(), s.db, state.user.ID, r.URL.Query().Get("cursor"), values.PageSize)
 	if err != nil {
 		s.writeSocialFailure(w, r, "bookmarks page", err)
@@ -387,17 +382,19 @@ func (s *server) handleBookmarksPage(w http.ResponseWriter, r *http.Request) {
 	}
 	states := s.viewerStates(r.Context(), r, postIDs(posts))
 	location := loadLocation(values.SiteTimezone)
-	ownerName, _ := s.ownerIdentity(r.Context())
+	ownerName, ownerAvatar := s.authorIdentity(r.Context(), values)
 	view := bookmarkPageView{
-		pageView: s.shellView(r, navBookmarksFilter),
-		Empty:    len(posts) == 0,
-		CanReact: true,
-		Posts:    make([]postCard, 0, len(posts)),
+		pageView:    s.shellViewWithSettings(r, navBookmarksFilter, values),
+		Empty:       len(posts) == 0,
+		CanReact:    true,
+		Posts:       make([]postCard, 0, len(posts)),
+		OwnerAvatar: ownerAvatar,
 	}
 	for _, post := range posts {
 		card := s.cardOf(post, location)
 		card.CanReact = true
 		card.OwnerName = ownerName
+		card.OwnerAvatar = ownerAvatar
 		if state, ok := states[post.ID]; ok {
 			card.Liked = state.Liked
 			card.Bookmarked = state.Bookmarked

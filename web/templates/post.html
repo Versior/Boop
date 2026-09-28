@@ -1,7 +1,7 @@
-{{define "title"}}{{if .Title}}{{.Title}} · Boop{{else}}Boop{{end}}{{end}}
+{{define "title"}}{{if .Title}}{{.Title}} · {{.SiteName}}{{else}}{{.SiteName}}{{end}}{{end}}
 {{define "content"}}
     <article class="post post-detail" data-type="{{.Card.Type}}">
-      <span class="avatar" aria-hidden="true"><svg viewBox="0 0 48 48"><use href="#i-avatar"/></svg></span>
+      {{template "avatar" .OwnerAvatar}}
       <div class="post-body">
         <div class="post-head">
           <span class="name">{{.OwnerName}}</span>

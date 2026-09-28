@@ -20,6 +20,7 @@ const settingsJSONBytes = 64 << 10
 type settingsPayload struct {
 	SiteName                  string `json:"site_name"`
 	SiteDescription           string `json:"site_description"`
+	SiteAvatarURL             string `json:"site_avatar_url"`
 	SiteTimezone              string `json:"site_timezone"`
 	PageSize                  int    `json:"page_size"`
 	RegistrationEnabled       bool   `json:"registration_enabled"`
@@ -45,6 +46,7 @@ type settingsPayload struct {
 type settingsRequest struct {
 	SiteName                  *string `json:"site_name"`
 	SiteDescription           *string `json:"site_description"`
+	SiteAvatarURL             *string `json:"site_avatar_url"`
 	SiteTimezone              *string `json:"site_timezone"`
 	PageSize                  *int    `json:"page_size"`
 	RegistrationEnabled       *bool   `json:"registration_enabled"`
@@ -78,6 +80,7 @@ func (s *server) settingsPayloadOf(ctx context.Context) (settingsPayload, error)
 	return settingsPayload{
 		SiteName:                  values.SiteName,
 		SiteDescription:           values.SiteDescription,
+		SiteAvatarURL:             values.SiteAvatarURL,
 		SiteTimezone:              values.SiteTimezone,
 		PageSize:                  values.PageSize,
 		RegistrationEnabled:       values.RegistrationEnabled,
@@ -127,6 +130,9 @@ func (s *server) handlePatchSettingsAPI(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.SiteDescription != nil {
 		values[settings.KeySiteDescription] = *body.SiteDescription
+	}
+	if body.SiteAvatarURL != nil {
+		values[settings.KeySiteAvatarURL] = *body.SiteAvatarURL
 	}
 	if body.SiteTimezone != nil {
 		values[settings.KeySiteTimezone] = *body.SiteTimezone
@@ -252,7 +258,7 @@ type adminSettingsView struct {
 func (s *server) writeSettingsFailure(w http.ResponseWriter, r *http.Request, operation string, err error) {
 	switch {
 	case errors.Is(err, settings.ErrMasterKeyRequired):
-		writeFailure(w, r, http.StatusConflict, "master_key_required", "未配置 BOOP_MASTER_KEY，无法保存或清除密钥")
+		writeFailure(w, r, http.StatusConflict, "master_key_required", "未配置 BOOP_MASTER_KEY，无法保存密钥")
 	case errors.Is(err, settings.ErrInvalidValue):
 		writeFailure(w, r, http.StatusBadRequest, "invalid_settings", "设置值不合法："+settingsReason(err))
 	default:

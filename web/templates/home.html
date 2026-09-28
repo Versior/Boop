@@ -1,10 +1,10 @@
 {{define "content"}}
-    <h1 class="sr-only">Boop 首页</h1>
+    <h1 class="sr-only">{{.SiteName}} 首页</h1>
 
     {{if .Composer}}
     <!-- 快捷发布器：仅站长登录时由服务端渲染，读者与游客 DOM 中不存在 -->
     <section class="composer" id="composer" data-composer aria-label="快捷发布" tabindex="-1">
-      <span class="avatar" aria-hidden="true"><svg viewBox="0 0 48 48"><use href="#i-avatar"/></svg></span>
+      {{template "avatar" .OwnerAvatar}}
       <form class="composer-body" data-composer-form action="/api/v1/admin/posts" method="post">
         <label class="sr-only" for="composer-text">分享此刻发生的事</label>
         <textarea class="composer-input" id="composer-text" data-composer-text rows="1"
@@ -61,7 +61,7 @@
     <p class="stream-more"><a class="load-more" href="{{.LoadMoreURL}}">加载更多</a></p>
     {{end}}
 
-    <p class="stream-end">Boop 上只有站长会发布内容，读者可以注册后参与评论与收藏</p>
+    <p class="stream-end">{{.SiteName}} 上只有站长会发布内容，读者可以注册后参与评论与收藏</p>
 
     <div class="toast" id="toast" role="status" aria-live="polite" hidden><span class="toast-msg" data-toast-message></span></div>
 {{end}}

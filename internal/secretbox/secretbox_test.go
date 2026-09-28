@@ -9,6 +9,10 @@ import (
 	"testing"
 )
 
+// testBinding is the stable context one stored secret is sealed with; the
+// settings package passes the setting key here.
+const testBinding = "settings.test.key"
+
 func testKey(t *testing.T, fill byte) []byte {
 	t.Helper()
 	key := make([]byte, KeyBytes)
@@ -26,7 +30,7 @@ func TestSealAndOpenRoundTrip(t *testing.T) {
 
 	values := []string{"", "gho_0123456789", "sk-proj-abcDEF_-123", "空格与中文也要能回来"}
 	for _, value := range values {
-		nonce, ciphertext, err := box.Seal(value)
+		nonce, ciphertext, err := box.Seal(testBinding, value)
 		if err != nil {
 			t.Fatalf("Seal(%q): %v", value, err)
 		}
@@ -36,7 +40,7 @@ func TestSealAndOpenRoundTrip(t *testing.T) {
 		if value != "" && strings.Contains(string(ciphertext), value) {
 			t.Errorf("ciphertext of %q contains the plaintext", value)
 		}
-		opened, err := box.Open(nonce, ciphertext)
+		opened, err := box.Open(testBinding, nonce, ciphertext)
 		if err != nil {
 			t.Fatalf("Open(%q): %v", value, err)
 		}
@@ -51,11 +55,11 @@ func TestSealUsesAFreshNonce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	firstNonce, firstCipher, err := box.Seal("same value")
+	firstNonce, firstCipher, err := box.Seal(testBinding, "same value")
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
 	}
-	secondNonce, secondCipher, err := box.Seal("same value")
+	secondNonce, secondCipher, err := box.Seal(testBinding, "same value")
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
 	}
@@ -67,12 +71,44 @@ func TestSealUsesAFreshNonce(t *testing.T) {
 	}
 }
 
+// TestOpenRejectsAnotherBinding is the documented binding rule: a ciphertext is
+// only valid for the exact binding it was sealed with, so moving it to another
+// setting (or another row) fails instead of returning plaintext.
+func TestOpenRejectsAnotherBinding(t *testing.T) {
+	box, err := New(testKey(t, 4))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	nonce, ciphertext, err := box.Seal("github.client_secret", "a-stored-secret")
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	if _, err := box.Open("github.client_id", nonce, ciphertext); !errors.Is(err, ErrCiphertext) {
+		t.Errorf("Open with another binding: error = %v, want ErrCiphertext", err)
+	}
+	if _, err := box.Open("", nonce, ciphertext); !errors.Is(err, ErrCiphertext) {
+		t.Errorf("Open without the binding: error = %v, want ErrCiphertext", err)
+	}
+	if _, err := box.Open("github.client_secret", nonce, ciphertext); err != nil {
+		t.Errorf("Open with the original binding: %v", err)
+	}
+	// The same plaintext under two bindings never produces the same ciphertext.
+	otherNonce, otherCipher, err := box.Seal("ai.api_key", "a-stored-secret")
+	if err != nil {
+		t.Fatalf("second Seal: %v", err)
+	}
+	if bytes.Equal(nonce, otherNonce) || bytes.Equal(ciphertext, otherCipher) {
+		t.Error("two bindings produced identical output")
+	}
+}
+
 func TestOpenRejectsAWrongKey(t *testing.T) {
 	sealer, err := New(testKey(t, 1))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	nonce, ciphertext, err := sealer.Seal("github client secret")
+	nonce, ciphertext, err := sealer.Seal(testBinding, "github client secret")
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
 	}
@@ -81,7 +117,7 @@ func TestOpenRejectsAWrongKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if _, err := other.Open(nonce, ciphertext); !errors.Is(err, ErrCiphertext) {
+	if _, err := other.Open(testBinding, nonce, ciphertext); !errors.Is(err, ErrCiphertext) {
 		t.Fatalf("Open with another key: error = %v, want ErrCiphertext", err)
 	}
 }
@@ -91,27 +127,27 @@ func TestOpenRejectsTamperedInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	nonce, ciphertext, err := box.Seal("ai api key")
+	nonce, ciphertext, err := box.Seal(testBinding, "ai api key")
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
 	}
 
 	tampered := append([]byte(nil), ciphertext...)
 	tampered[0] ^= 0xff
-	if _, err := box.Open(nonce, tampered); !errors.Is(err, ErrCiphertext) {
+	if _, err := box.Open(testBinding, nonce, tampered); !errors.Is(err, ErrCiphertext) {
 		t.Errorf("tampered ciphertext: error = %v, want ErrCiphertext", err)
 	}
 
 	badNonce := append([]byte(nil), nonce...)
 	badNonce[0] ^= 0xff
-	if _, err := box.Open(badNonce, ciphertext); !errors.Is(err, ErrCiphertext) {
+	if _, err := box.Open(testBinding, badNonce, ciphertext); !errors.Is(err, ErrCiphertext) {
 		t.Errorf("tampered nonce: error = %v, want ErrCiphertext", err)
 	}
 
-	if _, err := box.Open(nil, ciphertext); !errors.Is(err, ErrCiphertext) {
+	if _, err := box.Open(testBinding, nil, ciphertext); !errors.Is(err, ErrCiphertext) {
 		t.Errorf("missing nonce: error = %v, want ErrCiphertext", err)
 	}
-	if _, err := box.Open(nonce, nil); !errors.Is(err, ErrCiphertext) {
+	if _, err := box.Open(testBinding, nonce, nil); !errors.Is(err, ErrCiphertext) {
 		t.Errorf("empty ciphertext: error = %v, want ErrCiphertext", err)
 	}
 }
@@ -139,7 +175,7 @@ func TestNewFromBase64MatchesTheRawKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFromBase64: %v", err)
 	}
-	nonce, ciphertext, err := box.Seal("configured")
+	nonce, ciphertext, err := box.Seal(testBinding, "configured")
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
 	}
@@ -147,7 +183,7 @@ func TestNewFromBase64MatchesTheRawKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	opened, err := raw.Open(nonce, ciphertext)
+	opened, err := raw.Open(testBinding, nonce, ciphertext)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -158,10 +194,10 @@ func TestNewFromBase64MatchesTheRawKey(t *testing.T) {
 
 func TestNilBoxIsRefused(t *testing.T) {
 	var box *Box
-	if _, _, err := box.Seal("value"); err == nil {
+	if _, _, err := box.Seal(testBinding, "value"); err == nil {
 		t.Error("Seal on a nil box must fail")
 	}
-	if _, err := box.Open(make([]byte, NonceBytes), []byte("x")); err == nil {
+	if _, err := box.Open(testBinding, make([]byte, NonceBytes), []byte("x")); err == nil {
 		t.Error("Open on a nil box must fail")
 	}
 }

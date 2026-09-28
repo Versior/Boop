@@ -32,6 +32,7 @@ func TestDefaultsMatchDocumentedValues(t *testing.T) {
 	want := Values{
 		SiteName:                  "Boop",
 		SiteDescription:           "遇事开心的个人博客",
+		SiteAvatarURL:             "",
 		SiteTimezone:              "Asia/Shanghai",
 		PageSize:                  20,
 		RegistrationEnabled:       true,
@@ -80,6 +81,7 @@ func TestSeedWritesEveryDocumentedKeyOnce(t *testing.T) {
 	want := map[string]string{
 		"site.name":                   `"Boop"`,
 		"site.description":            `"遇事开心的个人博客"`,
+		"site.avatar_url":             `""`,
 		"site.timezone":               `"Asia/Shanghai"`,
 		"content.page_size":           `20`,
 		"auth.registration_enabled":   `true`,
@@ -301,6 +303,18 @@ func TestSetValidatesKnownKeys(t *testing.T) {
 		{"description at upper bound", KeySiteDescription, longRunes(280), false},
 		{"description too long", KeySiteDescription, longRunes(281), true},
 		{"description wrong type", KeySiteDescription, true, true},
+		{"avatar empty", KeySiteAvatarURL, "", false},
+		{"avatar https", KeySiteAvatarURL, "https://cdn.example.com/a.png", false},
+		{"avatar http", KeySiteAvatarURL, "http://127.0.0.1:8080/avatar.png", false},
+		{"avatar with query", KeySiteAvatarURL, "https://cdn.example.com/a.png?v=2", false},
+		{"avatar at upper bound", KeySiteAvatarURL, "https://example.com/" + strings.Repeat("a", maxAvatarURLRunes-len("https://example.com/")), false},
+		{"avatar too long", KeySiteAvatarURL, "https://example.com/" + strings.Repeat("a", maxAvatarURLRunes), true},
+		{"avatar relative", KeySiteAvatarURL, "/a.png", true},
+		{"avatar wrong scheme", KeySiteAvatarURL, "javascript:alert(1)", true},
+		{"avatar data url", KeySiteAvatarURL, "data:image/png;base64,AAAA", true},
+		{"avatar without host", KeySiteAvatarURL, "https://", true},
+		{"avatar with credentials", KeySiteAvatarURL, "https://user:pass@example.com/a.png", true},
+		{"avatar wrong type", KeySiteAvatarURL, 12, true},
 		{"timezone utc", KeySiteTimezone, "UTC", false},
 		{"timezone shanghai", KeySiteTimezone, "Asia/Shanghai", false},
 		{"timezone empty", KeySiteTimezone, "", true},
@@ -458,15 +472,12 @@ func secretRow(t *testing.T, db *sql.DB, key string) (nonce, ciphertext []byte, 
 	return nonce, ciphertext, true
 }
 
-func TestApplyRequiresTheMasterKeyForSecrets(t *testing.T) {
+func TestApplyRequiresTheMasterKeyForSecretWrites(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
 
 	if err := Apply(ctx, db, nil, Update{Secrets: map[string]string{SecretKeyAIAPIKey: "sk-x"}}); !errors.Is(err, ErrMasterKeyRequired) {
 		t.Fatalf("secret write without a master key: error = %v, want ErrMasterKeyRequired", err)
-	}
-	if err := Apply(ctx, db, nil, Update{Clear: []string{SecretKeyAIAPIKey}}); !errors.Is(err, ErrMasterKeyRequired) {
-		t.Fatalf("secret clear without a master key: error = %v, want ErrMasterKeyRequired", err)
 	}
 	if _, _, ok := secretRow(t, db, SecretKeyAIAPIKey); ok {
 		t.Error("a refused secret write stored a row")
@@ -482,6 +493,52 @@ func TestApplyRequiresTheMasterKeyForSecrets(t *testing.T) {
 	}
 	if values.SiteName != "没有主密钥" {
 		t.Errorf("SiteName = %q", values.SiteName)
+	}
+}
+
+// TestApplyClearsSecretsWithoutTheMasterKey pins the documented rule: deleting a
+// secret only removes a row, so it needs no decryption and must stay available
+// (and idempotent) even when BOOP_MASTER_KEY is missing.
+func TestApplyClearsSecretsWithoutTheMasterKey(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	box := testBox(t, 6)
+
+	if err := Apply(ctx, db, box, Update{Secrets: map[string]string{SecretKeyGitHubClientSecret: "stored-value"}}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if err := Apply(ctx, db, nil, Update{Clear: []string{SecretKeyGitHubClientSecret}}); err != nil {
+		t.Fatalf("clear without a master key: %v", err)
+	}
+	if _, _, ok := secretRow(t, db, SecretKeyGitHubClientSecret); ok {
+		t.Error("the cleared secret is still stored")
+	}
+	// Clearing again without a master key is still harmless.
+	if err := Apply(ctx, db, nil, Update{Clear: []string{SecretKeyGitHubClientSecret}}); err != nil {
+		t.Errorf("second clear: %v", err)
+	}
+	// A request that writes a new secret is a secret write as a whole: the
+	// missing master key fails the whole update, including its clear list.
+	if err := Apply(ctx, db, box, Update{Secrets: map[string]string{SecretKeyAIAPIKey: "sk-ai"}}); err != nil {
+		t.Fatalf("store the other secret: %v", err)
+	}
+	err := Apply(ctx, db, nil, Update{
+		Values:  map[string]any{KeySiteName: "混合写入"},
+		Secrets: map[string]string{SecretKeyGitHubClientSecret: "new-value"},
+		Clear:   []string{SecretKeyAIAPIKey},
+	})
+	if !errors.Is(err, ErrMasterKeyRequired) {
+		t.Fatalf("mixed update: error = %v, want ErrMasterKeyRequired", err)
+	}
+	if _, _, ok := secretRow(t, db, SecretKeyAIAPIKey); !ok {
+		t.Error("the refused update deleted a secret")
+	}
+	values, err := Load(ctx, db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if values.SiteName != Defaults().SiteName {
+		t.Errorf("SiteName = %q, want the refused update to leave it alone", values.SiteName)
 	}
 }
 
@@ -648,6 +705,66 @@ func TestReadSecretFailures(t *testing.T) {
 	}
 	if _, err := ReadSecret(ctx, db, box, SecretKeyAIAPIKey); err == nil {
 		t.Error("a tampered row was accepted")
+	}
+}
+
+// TestReadSecretRejectsASwappedCiphertext is the AAD invariant: every stored
+// secret is bound to its own setting key, so copying the nonce and ciphertext of
+// one key onto another key can never decrypt — neither side returns plaintext.
+func TestReadSecretRejectsASwappedCiphertext(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	box := testBox(t, 8)
+
+	if err := Apply(ctx, db, box, Update{Secrets: map[string]string{
+		SecretKeyGitHubClientSecret: "github-secret-value",
+		SecretKeyAIAPIKey:           "sk-ai-api-key-value",
+	}}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	// Both rows are valid before the swap: this is the state a working site has.
+	for key, want := range map[string]string{
+		SecretKeyGitHubClientSecret: "github-secret-value",
+		SecretKeyAIAPIKey:           "sk-ai-api-key-value",
+	} {
+		if got, err := ReadSecret(ctx, db, box, key); err != nil || got != want {
+			t.Fatalf("ReadSecret(%s) = %q, %v before the swap", key, got, err)
+		}
+	}
+
+	// Swap the two rows, exactly as copying the columns between keys would.
+	firstNonce, firstCipher, ok := secretRow(t, db, SecretKeyGitHubClientSecret)
+	if !ok {
+		t.Fatal("the github row is missing")
+	}
+	secondNonce, secondCipher, ok := secretRow(t, db, SecretKeyAIAPIKey)
+	if !ok {
+		t.Fatal("the ai row is missing")
+	}
+	storeRow := func(key string, nonce, ciphertext []byte) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx,
+			`UPDATE secret_settings SET nonce = ?, ciphertext = ? WHERE key = ?`, nonce, ciphertext, key); err != nil {
+			t.Fatalf("store %s: %v", key, err)
+		}
+	}
+	storeRow(SecretKeyGitHubClientSecret, secondNonce, secondCipher)
+	storeRow(SecretKeyAIAPIKey, firstNonce, firstCipher)
+
+	for _, key := range []string{SecretKeyGitHubClientSecret, SecretKeyAIAPIKey} {
+		value, err := ReadSecret(ctx, db, box, key)
+		if err == nil {
+			t.Fatalf("ReadSecret(%s) = %q, want a decryption failure", key, value)
+		}
+		if !errors.Is(err, secretbox.ErrCiphertext) {
+			t.Errorf("ReadSecret(%s): error = %v, want a cipher failure", key, err)
+		}
+		for _, plaintext := range []string{"github-secret-value", "sk-ai-api-key-value"} {
+			if strings.Contains(err.Error(), plaintext) {
+				t.Errorf("ReadSecret(%s) leaks the plaintext: %v", key, err)
+			}
+		}
 	}
 }
 

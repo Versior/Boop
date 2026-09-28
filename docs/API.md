@@ -31,8 +31,9 @@
 GitHub 登录规则：
 
 - `GET /auth/github/start` 生成一次性 state（32 字节随机，10 分钟有效），把它同时放进 `boop_oauth` Cookie（HttpOnly、SameSite=Lax、Path=/、Secure 跟随 `BOOP_SECURE_COOKIES`）并写入跳转 query，然后 302 到 GitHub。`return_to` 只接受同源路径（形如 `/bookmarks`）；绝对 URL、`//host`、含反斜杠或换行的值一律退回 `/`。同时挂起的登录流程总数上限为 1000，超出返回 503 `oauth_busy`；本地址超出限速时返回 429。
-- `GET /auth/github/callback` 要求 query 的 `state` 存在、未过期、未使用过，且与 Cookie 常量时间相等；state 无论成败都会被消费，重放一律 403 `oauth_state_invalid`。失败码：400 `oauth_code_missing`、400 `oauth_rejected`、502 `github_unavailable`、403 `email_unverified`、403 `registration_disabled`、403 `account_disabled`。
+- `GET /auth/github/callback` 要求 query 的 `state` 存在、未过期、未使用过，且与 Cookie 常量时间相等；state 无论成败都会被消费，重放一律 403 `oauth_state_invalid`。失败码：400 `oauth_code_missing`、400 `oauth_rejected`、502 `github_unavailable`、403 `email_unverified`、403 `registration_disabled`、403 `account_disabled`、409 `oauth_conflict`。
 - 已绑定的 GitHub 账号直接登录；否则仅当 GitHub 报告该邮箱 `verified`（取自 `/user/emails`）时才允许绑定已有账户或创建新账户，未验证邮箱一律 403 `email_unverified`，不写任何行。
+- 绑定 GitHub 账号时，若 `oauth_accounts(provider, provider_user_id)` 已被占用，会在**同一事务内重查**实际 `user_id`：只有它等于本次解析出的账户时才幂等成功；指向别的账户时整个登录 409 `oauth_conflict` 并回滚，绝不会给未绑定该身份的用户发 Session。
 - GitHub 只能创建 `reader`；新账户不带密码哈希（`password_hash` 为 NULL），因此不能用密码登录。站点关闭公开注册后，已有账户仍可用密码或 GitHub 登录，也仍可把已验证邮箱绑定到已有账户；只有“创建新账户”会被 403 拒绝。
 - GitHub 登录失败返回统一状态页（带 request_id），不输出来自 GitHub 的令牌、授权码或客户端密钥。
 
@@ -118,11 +119,13 @@ GitHub 登录规则：
 设置接口规则：
 
 - 两个接口都只允许 owner：游客 401 `unauthorized`，读者 403 `forbidden`。
-- `GET` 返回 `site_name`、`site_description`、`site_timezone`、`page_size`、`registration_enabled`、`comments_enabled`、`comments_moderation_enabled`、`ai_enabled`、`ai_base_url`、`ai_chat_model`、`ai_embedding_model`、`ai_author_status_ttl_hours`，以及 `github_client_id_set`、`github_client_secret_set`、`ai_api_key_set`、`master_key` 四个布尔标志。**任何密钥明文都不会出现在响应里**，页面只知道某个密钥是否已配置。
+- `GET` 返回 `site_name`、`site_description`、`site_avatar_url`、`site_timezone`、`page_size`、`registration_enabled`、`comments_enabled`、`comments_moderation_enabled`、`ai_enabled`、`ai_base_url`、`ai_chat_model`、`ai_embedding_model`、`ai_author_status_ttl_hours`，以及 `github_client_id_set`、`github_client_secret_set`、`ai_api_key_set`、`master_key` 四个布尔标志。**任何密钥明文都不会出现在响应里**，页面只知道某个密钥是否已配置。
 - `PATCH` 只接受上述字段加上三个密钥字段（`github_client_id`、`github_client_secret`、`ai_api_key`）和 `clear_secret`；上传目录、单文件大小与允许的 MIME 类型只能由环境变量配置，请求里出现即 400 `invalid_body`。
+- `site_avatar_url` 允许为空（表示不配置站点头像），非空时必须是**无凭据的 http/https 绝对 URL**，且不超过 2048 个字符；相对路径、其它协议、带 `user:pass@` 的值一律 400 `invalid_settings`。
 - 密钥字段为空字符串表示**保持不变**（不会清空）；删除必须显式列出密钥名，例如 `{"clear_secret":["github.client_secret"]}`，删除不存在的密钥是幂等的；`clear_secret` 里的未知名返回 400 `invalid_settings`。
 - 值校验沿用 `internal/settings` 的类型与范围规则：非法值返回 400 `invalid_settings`，且**整次更新失败**——校验先于事务，不会出现部分字段已写入的状态。
-- 密钥用 `BOOP_MASTER_KEY` 的 AES-256-GCM 加密后存入 `secret_settings`，每次写入生成新的 nonce；未配置 `BOOP_MASTER_KEY` 时任何密钥写入或删除返回 409 `master_key_required`（非密钥字段仍可修改）。
+- 密钥用 `BOOP_MASTER_KEY` 的 AES-256-GCM 加密后存入 `secret_settings`，每次写入生成新的 nonce；**密文同时以它自己的 settings key 作为 GCM additional data 绑定**，因此把某条密文换到另一个 key（或另一个 setting）上都无法解密，只会得到认证失败，绝不会返回明文。
+- 写入或替换密钥需要 `BOOP_MASTER_KEY`，未配置时返回 409 `master_key_required`（非密钥字段仍可修改）；**删除密钥只是删一行，不需要解密，因此在没有 `BOOP_MASTER_KEY` 时也能幂等清除**。同一次请求里既有新密钥又有 `clear_secret` 时按“写入”处理，整单 409。
 - 设置请求体上限为 64KiB，超限返回 413 `payload_too_large`。
 - 设置表损坏时 `GET` 与设置页返回 500，而不是用默认值渲染表单（避免把默认值保存回去覆盖真实设置）。
 
@@ -133,8 +136,15 @@ GitHub 登录规则：
 - `GET /search?q=` 搜索结果 SSR。
 - `GET /login`、`GET /register`。
 - `GET /bookmarks` 登录用户收藏；游客重定向到 `/login`。
-- `GET /login` 在配置了 GitHub 客户端密钥时额外提供 `/auth/github/start` 登录入口。
+- `GET /login` 与 `GET /register` 在 GitHub 客户端 ID 与 Secret **都能解密且非空**时显示同一个 `/auth/github/start` 登录入口（注册页在关闭公开注册后仍然显示，供已绑定的账号登录）；未配置 `BOOP_MASTER_KEY`、缺少任一半或密文损坏（换了主密钥）时隐藏入口并写脱敏告警，`/auth/github/start` 也随之安全失败，不会发出任何 Session。该判断每次都实际解密，不做缓存。
 - `GET /admin` 站长管理入口，303 跳转到 `/admin/settings`；游客重定向到 `/login`，普通读者得到 403 HTML 页。
 - `GET /admin/comments`、`GET /admin/settings` 站长页面；两者的游客都重定向到 `/login`，普通读者得到 403 HTML 页。
 - 未知页面返回带 request_id 的统一 404；API 永远不返回 HTML 错误页。
+
+品牌与头像：
+
+- `site_name`、`site_description`、`site_avatar_url` 注入所有页面的外壳：标题后缀、桌面与移动品牌名、品牌 `aria-label`、搜索框标签与占位符、`meta description`，以及首页可见文案（`sr-only` 标题与底部说明）。页面外壳不再硬编码任何品牌名。
+- 渲染头像的优先级是 `site_avatar_url` → 站长账号 `users.avatar_url` → 内置 SVG，用于快捷发布、信息流卡片、收藏卡片与内容详情；`site_avatar_url` 同时作为页面 `<link rel="icon">`，为空时不输出。CSP 的 `img-src` 为 `'self' data: http: https:`，否则配置的绝对头像地址会被浏览器直接拦掉；脚本、样式与连接仍然是同源（`script-src 'self'`、`connect-src 'self'`）。
+- 展示路径读取设置失败时回退到默认值并写一条告警（页面仍然可用）；而设置表单和写入路径在设置损坏时返回 500 / 4xx，避免把默认值写回去覆盖真实设置。
+- 首页、内容详情、收藏页在已经读过设置时复用同一次读取（只注入外壳），不会为品牌再查一次库。
 

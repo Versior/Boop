@@ -1,4 +1,4 @@
-{{define "title"}}站长设置 · Boop{{end}}
+{{define "title"}}站长设置 · {{.SiteName}}{{end}}
 {{define "content"}}
     <h1 class="sr-only">站长设置</h1>
 
@@ -18,6 +18,11 @@
           <span>站点简介</span>
           <textarea name="site_description" rows="3" maxlength="280">{{.Settings.SiteDescription}}</textarea>
         </label>
+        <label class="auth-field">
+          <span>站点头像 URL</span>
+          <input name="site_avatar_url" type="url" maxlength="2048" value="{{.Settings.SiteAvatarURL}}" placeholder="https://example.com/avatar.png">
+        </label>
+        <p class="settings-hint">留空则使用站长账号头像，再为空则使用内置图标；只接受 http/https 绝对地址，不能带账号密码。头像同时作为浏览器标签页图标。</p>
         <label class="auth-field">
           <span>时区</span>
           <input name="site_timezone" type="text" required maxlength="64" value="{{.Settings.SiteTimezone}}">
@@ -104,7 +109,7 @@
       </section>
 
       {{if not .Settings.MasterKey}}
-      <p class="settings-warning" role="alert">未配置 BOOP_MASTER_KEY：密钥字段无法保存，站点也会隐藏 GitHub 登录入口。</p>
+      <p class="settings-warning" role="alert">未配置 BOOP_MASTER_KEY：密钥字段无法保存（清除已保存的密钥仍可用）；站点也会隐藏 GitHub 登录入口。</p>
       {{end}}
       <p class="auth-error" role="alert" data-settings-error hidden></p>
       <button class="auth-submit" type="submit" data-settings-submit>保存设置</button>
