@@ -360,6 +360,98 @@ func TestAuthWriteRejectsOversizedBody(t *testing.T) {
 	}
 }
 
+// authJSONLimit is the ceiling authentication JSON must respect on its own,
+// independent of BOOP_MAX_UPLOAD_MB (docs/API.md §认证).
+const authJSONLimit = 64 << 10
+
+// exactSizeBody pads a register payload with an ASCII display name so the
+// request body is exactly total bytes long.
+func exactSizeBody(t *testing.T, prefix, suffix string, total int) string {
+	t.Helper()
+	padding := total - len(prefix) - len(suffix)
+	if padding < 0 {
+		t.Fatalf("body skeleton is %d bytes, longer than the requested %d", len(prefix)+len(suffix), total)
+	}
+	return prefix + strings.Repeat("x", padding) + suffix
+}
+
+func TestAuthJSONBodyLimitBoundary(t *testing.T) {
+	f := newAuthFixture(t)
+	prefix := `{"email":"reader@example.com","password":"` + authPassword + `","display_name":"`
+	suffix := `"}`
+
+	// Exactly at the limit the body is fully read: the handler then rejects the
+	// over-long display name instead of reporting a size failure.
+	atLimit := exactSizeBody(t, prefix, suffix, authJSONLimit)
+	if len(atLimit) != authJSONLimit {
+		t.Fatalf("body length = %d, want %d", len(atLimit), authJSONLimit)
+	}
+	rec := f.postSameOrigin(t, "/api/v1/auth/register", atLimit, nil, nil)
+	if rec.Code == http.StatusRequestEntityTooLarge {
+		t.Fatalf("a body of exactly %d bytes was rejected as too large: %s", authJSONLimit, rec.Body.String())
+	}
+	if code, _, _ := decodeAPIError(t, rec); code != "invalid_display_name" {
+		t.Fatalf("status = %d, code = %q; want the handler to have read the whole body", rec.Code, code)
+	}
+	if users := f.countRows(t, "users"); users != 0 {
+		t.Errorf("users = %d, want none created", users)
+	}
+
+	// One byte more is refused before any handler work happens.
+	overLimit := exactSizeBody(t, prefix, suffix, authJSONLimit+1)
+	rec = f.postSameOrigin(t, "/api/v1/auth/register", overLimit, nil, nil)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413 for a %d byte body: %s", rec.Code, len(overLimit), rec.Body.String())
+	}
+	if code, _, _ := decodeAPIError(t, rec); code != "payload_too_large" {
+		t.Errorf("code = %q, want payload_too_large", code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want JSON", ct)
+	}
+}
+
+func TestLoginBodyLimitBoundary(t *testing.T) {
+	f := newAuthFixture(t)
+	prefix := `{"email":"reader@example.com","password":"`
+	suffix := `"}`
+
+	atLimit := exactSizeBody(t, prefix, suffix, authJSONLimit)
+	rec := f.postSameOrigin(t, "/api/v1/auth/login", atLimit, nil, nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 for an over-long password: %s", rec.Code, rec.Body.String())
+	}
+
+	overLimit := exactSizeBody(t, prefix, suffix, authJSONLimit+1)
+	rec = f.postSameOrigin(t, "/api/v1/auth/login", overLimit, nil, nil)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413 for a %d byte body", rec.Code, len(overLimit))
+	}
+}
+
+// The auth ceiling must hold on its own: a generous upload budget (100MB here)
+// cannot be spent on a sign-in request.
+func TestAuthJSONBodyLimitIsIndependentOfUploadLimit(t *testing.T) {
+	cfg := testConfig()
+	cfg.MaxUploadMB = 100
+	f := newAuthFixtureWithConfig(t, cfg)
+
+	prefix := `{"email":"reader@example.com","password":"` + authPassword + `","display_name":"`
+	body := exactSizeBody(t, prefix, `"}`, authJSONLimit+1)
+	rec := f.postSameOrigin(t, "/api/v1/auth/register", body, nil, nil)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413 despite a 100MB upload budget: %s", rec.Code, rec.Body.String())
+	}
+	if code, _, _ := decodeAPIError(t, rec); code != "payload_too_large" {
+		t.Errorf("code = %q, want payload_too_large", code)
+	}
+
+	// A small body on the same server is untouched by the auth ceiling.
+	if rec := f.register(t, "reader@example.com", "读者甲"); rec.Code != http.StatusCreated {
+		t.Fatalf("registration status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestUnsafeAuthRequestsRequireSameOriginEvidence(t *testing.T) {
 	f := newAuthFixture(t)
 	body := `{"email":"reader@example.com","password":"` + authPassword + `","display_name":"读者"}`

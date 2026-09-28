@@ -124,20 +124,20 @@ CREATE TABLE bookmarks (
 CREATE INDEX idx_bookmarks_user ON bookmarks(user_id, created_at DESC);
 
 CREATE TABLE settings (
-  key TEXT PRIMARY KEY,
+  key TEXT NOT NULL PRIMARY KEY,
   value_json TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 
 CREATE TABLE secret_settings (
-  key TEXT PRIMARY KEY,
+  key TEXT NOT NULL PRIMARY KEY,
   nonce BLOB NOT NULL,
   ciphertext BLOB NOT NULL,
   updated_at TEXT NOT NULL
 );
 
 CREATE TABLE ai_cache (
-  cache_key TEXT PRIMARY KEY,
+  cache_key TEXT NOT NULL PRIMARY KEY,
   value_json TEXT NOT NULL,
   source_updated_at TEXT NOT NULL,
   generated_at TEXT NOT NULL,

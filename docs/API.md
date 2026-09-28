@@ -26,7 +26,7 @@
 | GET | `/auth/github/start` | 可选 return_to | 保存一次性 state 后跳转 GitHub |
 | GET | `/auth/github/callback` | code,state | 登录/绑定后回到同源白名单路径 |
 
-密码 10–72 字节；邮箱最大 254 字符；登录与注册按 IP 和邮箱限速。所有认证失败使用相同外部错误信息。
+密码 10–72 字节；邮箱最大 254 字符；登录与注册按 IP 和邮箱限速。所有认证失败使用相同外部错误信息。认证接口的 JSON 请求体上限为 64KiB，与 `BOOP_MAX_UPLOAD_MB` 上传预算无关，超限返回 413 `payload_too_large`。
 
 ## 互动
 

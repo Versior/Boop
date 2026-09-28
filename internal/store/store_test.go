@@ -215,6 +215,54 @@ func TestIsUniqueViolation(t *testing.T) {
 	}
 }
 
+func TestKeyColumnsRejectNullKeys(t *testing.T) {
+	db := migratedDB(t)
+	ctx := context.Background()
+	stamp := time.Now().UTC().Format(time.RFC3339)
+
+	cases := []struct {
+		table  string
+		column string
+		insert string
+	}{
+		{
+			table:  "settings",
+			column: "key",
+			insert: `INSERT INTO settings(key, value_json, updated_at) VALUES(NULL, '1', ?)`,
+		},
+		{
+			table:  "secret_settings",
+			column: "key",
+			insert: `INSERT INTO secret_settings(key, nonce, ciphertext, updated_at) VALUES(NULL, x'00', x'00', ?)`,
+		},
+		{
+			table:  "ai_cache",
+			column: "cache_key",
+			insert: `INSERT INTO ai_cache(cache_key, value_json, source_updated_at, generated_at, expires_at) VALUES(NULL, '1', ?, ?, ?)`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.table+"."+tc.column, func(t *testing.T) {
+			args := make([]any, 0, 4)
+			for i := 0; i < strings.Count(tc.insert, "?"); i++ {
+				args = append(args, stamp)
+			}
+			if _, err := db.ExecContext(ctx, tc.insert, args...); err == nil {
+				t.Fatalf("inserting a NULL %s succeeded, want a NOT NULL failure", tc.column)
+			}
+
+			var rows int
+			if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+tc.table).Scan(&rows); err != nil {
+				t.Fatalf("count %s: %v", tc.table, err)
+			}
+			if rows != 0 {
+				t.Errorf("%s holds %d rows after a rejected insert, want 0", tc.table, rows)
+			}
+		})
+	}
+}
+
 func TestMigrateRejectsNilDatabase(t *testing.T) {
 	if err := Migrate(nil); err == nil {
 		t.Fatal("Migrate(nil) succeeded, want an error")

@@ -19,6 +19,11 @@ import (
 const (
 	sessionCookieName = "boop_session"
 
+	// maxAuthJSONBytes caps authentication request bodies on their own, far
+	// below the configurable upload budget: a sign-in or registration payload is
+	// a few hundred bytes, so the upload ceiling must never be spendable here.
+	maxAuthJSONBytes = 64 << 10
+
 	// navNeutralFilter matches no navigation item, so the auth pages mark no
 	// section as current in the shell.
 	navNeutralFilter = "auth"
@@ -232,8 +237,12 @@ func decodeJSONBody(r *http.Request, dst any) error {
 }
 
 // readJSON decodes the body and reports the failure itself, returning false
-// when the caller must stop.
+// when the caller must stop. It first narrows the body to maxAuthJSONBytes so
+// the upload ceiling cannot be reached through an authentication request.
 func (s *server) readJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, maxAuthJSONBytes)
+	}
 	if err := decodeJSONBody(r, dst); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
