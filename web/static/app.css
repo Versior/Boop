@@ -565,6 +565,51 @@ button.action:disabled{opacity:.6;cursor:default}
 .admin-item-post a{color:var(--accent)}
 .admin-actions{display:flex;gap:14px;margin-top:10px}
 
+/* ---------- 7.5.1 搜索页（中栏搜索行 + 克制结果流） ---------- */
+.search-head{padding:12px var(--pad);border-bottom:1px solid var(--line)}
+.search-form{display:flex;align-items:center;gap:8px}
+.search-field{
+  display:flex;align-items:center;gap:10px;flex:1;min-width:0;
+  height:44px;padding:0 15px;
+  border:1px solid var(--line-strong);border-radius:999px;
+  background:var(--bg-soft);color:var(--muted);
+  transition:border-color .12s ease,color .12s ease;
+}
+.search-field:focus-within{border-color:var(--accent);color:var(--ink)}
+.search-field .ic{color:var(--muted-2)}
+.search-field:focus-within .ic{color:var(--muted)}
+.search-input{
+  flex:1;min-width:0;padding:0;margin:0;
+  border:0;background:none;
+  color:var(--ink);font:inherit;font-size:15px;
+}
+.search-input::placeholder{color:var(--muted-2)}
+.search-input:focus-visible{outline-offset:4px}
+.search-submit{
+  display:inline-flex;align-items:center;justify-content:center;
+  height:44px;padding:0 20px;border-radius:999px;
+  background:var(--accent);color:var(--on-accent);
+  font-size:14px;font-weight:700;
+  transition:opacity .12s ease;
+}
+.search-submit:hover{opacity:.9}
+
+.result{border-bottom:1px solid var(--line);transition:background .12s ease}
+.result:hover{background:var(--hover)}
+.result-link{display:block;padding:var(--pad);color:inherit}
+.result-head{display:flex;align-items:center;gap:8px;font-size:13px;line-height:20px}
+.result-head time{color:var(--muted)}
+.result-title{margin-top:6px;font-size:16px;font-weight:700;line-height:1.35;letter-spacing:-.01em}
+.result-snippet{
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;
+  margin-top:5px;
+  color:var(--muted);font-size:14px;line-height:1.6;word-break:break-word;
+}
+.result-snippet mark{
+  padding:0 2px;border-radius:3px;
+  background:var(--accent-soft);color:var(--ink);font-weight:600;
+}
+
 /* ---------- 7.6 轻提示 ---------- */
 .toast{
   position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));z-index:40;

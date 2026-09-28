@@ -90,7 +90,7 @@ func newServer(cfg config.Config, db *sql.DB, logger *slog.Logger) (*server, err
 // parsePages builds one isolated template set per page so pages cannot leak
 // definitions into each other.
 func parsePages() (map[string]*template.Template, error) {
-	names := []string{"home", "post", "login", "register", "bookmarks", "admin_comments", "admin_settings"}
+	names := []string{"home", "post", "search", "login", "register", "bookmarks", "admin_comments", "admin_settings"}
 	pages := make(map[string]*template.Template, len(names))
 	for _, name := range names {
 		tmpl, err := template.New(name).ParseFS(web.FS, "templates/base.html", "templates/"+name+".html")
@@ -110,6 +110,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /login", s.handleLoginPage)
 	mux.HandleFunc("GET /register", s.handleRegisterPage)
 	mux.HandleFunc("GET /p/{slug}", s.handlePostPage)
+	mux.HandleFunc("GET /search", s.handleSearchPage)
+	mux.HandleFunc("GET /feed.xml", s.handleFeed)
+	// A non-GET /feed.xml is answered by this process rather than by ServeMux
+	// plain text, so the 405 always carries an Allow header.
+	mux.HandleFunc("/feed.xml", s.handleFeedMethodFallback)
 	mux.HandleFunc("GET /bookmarks", s.handleBookmarksPage)
 	mux.HandleFunc("GET /admin", s.handleAdminIndex)
 	mux.HandleFunc("GET /admin/settings", s.handleAdminSettingsPage)
@@ -124,6 +129,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/admin/settings", s.handleAdminSettingsAPI)
 	mux.HandleFunc("PATCH /api/v1/admin/settings", s.handlePatchSettingsAPI)
 	mux.HandleFunc("GET /api/v1/posts", s.handlePostsAPI)
+	mux.HandleFunc("GET /api/v1/search", s.handleSearchAPI)
+	mux.HandleFunc("/api/v1/search", s.handleSearchFallback)
+	mux.HandleFunc("/api/v1/search/", s.handleSearchFallback)
 	mux.HandleFunc("GET /api/v1/posts/{slug}", s.handlePostAPI)
 	mux.HandleFunc("GET /api/v1/posts/{slug}/comments", s.handleCommentsAPI)
 	mux.HandleFunc("POST /api/v1/posts/{id}/comments", s.handleCreateCommentAPI)
@@ -172,6 +180,9 @@ func (s *server) handler() http.Handler {
 type pageView struct {
 	Filter    string
 	CSRFToken string
+	// SearchQuery is the query the search page is showing. It stays empty
+	// everywhere else, so the right rail only reflects a query on /search.
+	SearchQuery string
 	// Owner is true for the signed-in owner, so the shell can offer the
 	// moderation entry without every page computing it.
 	Owner bool

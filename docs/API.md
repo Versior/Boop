@@ -11,9 +11,29 @@
 | GET | `/api/v1/posts?type=&cursor=&limit=` | 已发布信息流；`type` 为 article/photo，空值含动态 |
 | GET | `/api/v1/posts/{slug}` | 内容详情、点赞数、评论数和当前用户状态 |
 | GET | `/api/v1/posts/{slug}/comments` | 仅已批准评论，按时间正序嵌套一级回复 |
-| GET | `/api/v1/search?q=&cursor=` | SQLite FTS 搜索 |
+| GET | `/api/v1/search?q=&cursor=&limit=` | SQLite FTS 关键词搜索，返回 `{"data":[...],"next_cursor":"..."}` |
 | GET | `/api/v1/ai/author-status` | 作者状态缓存：text、topics、generated_at、stale、default；只读缓存，不同步调用模型 |
-| GET | `/feed.xml` | RSS 2.0 |
+| GET | `/feed.xml` | RSS 2.0，最新 50 条已发布内容 |
+
+## 搜索与 RSS
+
+搜索规则（`GET /api/v1/search`，公开）：
+
+- 查询词只取 Unicode 字母与数字，其余字符（引号、`*`、`(`、`)`、`-`、`^`、`:` 等 FTS5 语法字符）都是分隔符，会被丢弃；每个词各自加引号后再用 `AND` 连接，词序即输入顺序，大小写不敏感去重。因此输入永远无法注入或改变 FTS5 的查询结构，`OR`、`NEAR`、`NOT` 只会被当成普通词。
+- 空白或只有标点的 `q` **不是错误**：直接返回 `{"data":[],"next_cursor":""}`，且不执行任何 `MATCH`（`MATCH ''`、`MATCH '!!!'` 在 SQLite 里是语法错误，服务端不会把它变成 500）。
+- `q` 超过 100 个字符返回 400 `invalid_query`；`limit` 默认 20、最大 50，非法值返回 400 `invalid_limit`；游标非法返回 400 `invalid_cursor`。
+- 只返回 `status='published'` 且 `deleted_at IS NULL` 的内容，按 `published_at DESC, id DESC` 稳定排序，游标沿用公共信息流的 `<published_at,id>` 格式（不接受评分游标），因此翻页不会重复或漏行；bm25 分数只作为服务端内部字段，不出现在响应里、也不参与排序。
+- 结果字段是未来 AI 检索复用的最小集：`id`、`slug`、`type`、`title`、`excerpt`、`snippet`、`url`、`published_at`、`updated_at`。**不返回**正文、图片、标签、点赞与评论。
+- `snippet` 是**纯文本**片段，命中词由两个控制字符（U+0002 / U+0003）包裹；SSR 页面在 HTML 转义**之后**才把这两个标记换成 `<mark>`，所以存储正文里的 HTML 永远不会被执行。
+- `/api/v1/search` 子树永远是 JSON：未知子路径 404 `not_found`，错误方法 405 `method_not_allowed` 且带 `Allow: GET`。
+
+RSS 规则（`GET /feed.xml`，公开）：
+
+- 响应 `Content-Type: application/rss+xml; charset=utf-8`，文档为 RSS 2.0；`channel` 带站点名称、简介、语言 `zh-CN`，有内容时带 `lastBuildDate`。
+- 只包含最新 50 条已发布且未删除的内容，顺序 `published_at DESC, id DESC`。
+- 每条 item：标题（文章标题，否则正文第一条非空行，否则按类型回退）、绝对永久链接 `/p/{slug}`、与链接相同的 `guid`（`isPermaLink="true"`）、RFC1123Z 的 `pubDate`、由摘要或正文折叠为单行的纯文本 `description`（上限 300 字）。**不输出 `body_html`，也不提供 `content:encoded`**；XML 转义由编码器自动完成。
+- 绝对链接只由 `BOOP_BASE_URL` 生成，永远不读请求 Host 或转发头。
+- 其它方法返回 405 且带 `Allow: GET`；XML 路径不返回 JSON 错误信封。
 
 ## 认证
 
@@ -150,7 +170,8 @@ AI 接口规则：
 
 - `GET /` 首页 SSR。
 - `GET /p/{slug}` 内容详情 SSR。
-- `GET /search?q=` 搜索结果 SSR。
+- `GET /search?q=&cursor=` 搜索结果 SSR：空查询是提示态，无结果（含只有标点的查询）是带转义查询词的空态，翻页用同源“加载更多”链接并保留 `q`；左栏“搜索”项在 `/search` 高亮，移动端底部导航不变。
+- 每个页面的 `<head>` 都带 `<link rel="alternate" type="application/rss+xml" href="/feed.xml">` 发现链接。
 - `GET /login`、`GET /register`。
 - `GET /bookmarks` 登录用户收藏；游客重定向到 `/login`。
 - `GET /login` 与 `GET /register` 在 GitHub 客户端 ID 与 Secret **都能解密且非空**时显示同一个 `/auth/github/start` 登录入口（注册页在关闭公开注册后仍然显示，供已绑定的账号登录）；未配置 `BOOP_MASTER_KEY`、缺少任一半或密文损坏（换了主密钥）时隐藏入口并写脱敏告警，`/auth/github/start` 也随之安全失败，不会发出任何 Session。该判断每次都实际解密，不做缓存。

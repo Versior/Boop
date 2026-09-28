@@ -7,6 +7,7 @@
 {{if .CSRFToken}}<meta name="csrf-token" content="{{.CSRFToken}}">{{end}}
 <title>{{block "title" .}}{{.SiteName}}{{end}}</title>
 {{if .SiteDescription}}<meta name="description" content="{{.SiteDescription}}">{{end}}
+<link rel="alternate" type="application/rss+xml" title="{{.SiteName}}" href="/feed.xml">
 {{if .SiteAvatarURL}}<link rel="icon" href="{{.SiteAvatarURL}}">{{end}}
 <link rel="stylesheet" href="/static/app.css">
 <script src="/static/app.js"></script>
@@ -103,7 +104,7 @@
         <a class="nav-item{{if eq .Filter ""}} on{{end}}" href="/"{{if eq .Filter ""}} aria-current="page"{{end}}>
           <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-home"/></svg><span class="label">首页</span>
         </a>
-        <a class="nav-item" href="/search">
+        <a class="nav-item{{if eq .Filter "search"}} on{{end}}" href="/search"{{if eq .Filter "search"}} aria-current="page"{{end}}>
           <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg><span class="label">搜索</span>
         </a>
         <a class="nav-item{{if eq .Filter "article"}} on{{end}}" href="/?type=article"{{if eq .Filter "article"}} aria-current="page"{{end}}>
@@ -160,7 +161,7 @@
     <form class="rail-search" action="/search" method="get" role="search">
       <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg>
       <label class="sr-only" for="rail-search-input">搜索 {{.SiteName}}</label>
-      <input class="rail-search-input" id="rail-search-input" name="q" type="search" placeholder="搜索 {{.SiteName}}" autocomplete="off" maxlength="100">
+      <input class="rail-search-input" id="rail-search-input" name="q" type="search" value="{{.SearchQuery}}" placeholder="搜索 {{.SiteName}}" autocomplete="off" maxlength="100">
     </form>
     {{if .AIStatus.Text}}{{template "authorStatus" .AIStatus}}{{end}}
   </aside>

@@ -1,0 +1,48 @@
+{{define "title"}}{{if .Query}}{{.Query}} · 搜索 · {{.SiteName}}{{else}}搜索 · {{.SiteName}}{{end}}{{end}}
+{{define "content"}}
+    <h1 class="sr-only">搜索 {{.SiteName}}</h1>
+
+    <header class="page-head search-head">
+      <form class="search-form" action="/search" method="get" role="search">
+        <label class="sr-only" for="search-input">搜索 {{.SiteName}}</label>
+        <span class="search-field">
+          <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg>
+          <input class="search-input" id="search-input" name="q" type="search" value="{{.Query}}"
+            placeholder="搜索 {{.SiteName}}" autocomplete="off" maxlength="100">
+        </span>
+        <button class="search-submit" type="submit">搜索</button>
+      </form>
+      {{if .Prompted}}
+      <p class="page-sub">输入关键词，搜索站长发布过的动态、文章与摄影。</p>
+      {{else}}
+      <p class="page-sub">“{{.Query}}” · {{.ResultCount}} 条结果</p>
+      {{end}}
+    </header>
+
+    <div class="stream" id="stream">
+      {{if .Empty}}
+      <p class="empty">没有找到“{{.Query}}”相关的内容，换个关键词试试。</p>
+      {{end}}
+      {{range .Results}}
+      <!-- 整行是一个链接：碎片高亮只在服务端转义之后才变成 <mark>。 -->
+      <article class="result" data-type="{{.Type}}">
+        <a class="result-link" href="{{.URL}}">
+          <div class="result-head">
+            <span class="chip chip-type">{{.TypeLabel}}</span>
+            <time datetime="{{.Datetime}}">{{.TimeLabel}}</time>
+          </div>
+          {{if .Title}}<h2 class="result-title">{{.Title}}</h2>{{end}}
+          <p class="result-snippet">{{if .Snippet}}{{.Snippet}}{{else}}{{.Excerpt}}{{end}}</p>
+        </a>
+      </article>
+      {{end}}
+    </div>
+
+    {{if .LoadMoreURL}}
+    <p class="stream-more"><a class="load-more" href="{{.LoadMoreURL}}">加载更多</a></p>
+    {{end}}
+
+    <p class="stream-end">搜索结果只包含已发布且未被撤下的内容</p>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden><span class="toast-msg" data-toast-message></span></div>
+{{end}}
