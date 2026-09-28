@@ -29,9 +29,10 @@ const (
 	// FTS5 counts tokens, not characters, so one CJK run can be a long token.
 	MaxSnippetRunes = 240
 	// SnippetOpen and SnippetClose are the FTS5 highlight markers. They are
-	// control characters, so no stored post text can produce them by accident,
-	// and they survive HTML escaping untouched: the SSR view escapes the
-	// snippet first and only then turns these two markers into <mark> tags.
+	// control characters, so stored post text only produces them by accident,
+	// and they never become markup: the SSR view splits the snippet on these
+	// markers into plain-text parts, escapes every part and lets the template
+	// emit its own <mark> tags.
 	SnippetOpen  = "\x02"
 	SnippetClose = "\x03"
 	// snippetWindow is the FTS5 snippet width in tokens.
@@ -109,11 +110,12 @@ func Search(ctx context.Context, db *sql.DB, opts Options) (*Page, error) {
 		return nil, err
 	}
 
-	// Column 1 of the index is the Markdown body: a title-only match still yields
-	// the beginning of that column, which is the "first useful line" the stream
-	// shows, and every match inside it is marked by snippet().
+	// The snippet column is -1, so FTS5 fragments the indexed column with the best
+	// match (title, body or excerpt) instead of a fixed one: pinning the Markdown
+	// body would return an unhighlighted body prefix for a post that only matched
+	// in its title or excerpt, and the stream would show no evidence of the hit.
 	query := `SELECT p.id, p.slug, p.type, p.title, p.excerpt,
-			snippet(post_search, 1, ?, ?, '…', ?),
+			snippet(post_search, -1, ?, ?, '…', ?),
 			COALESCE(p.published_at, ''), p.updated_at, bm25(post_search)
 		FROM post_search JOIN posts p ON p.id = post_search.rowid
 		WHERE post_search MATCH ?
@@ -213,7 +215,7 @@ func tokenize(query string) []string {
 }
 
 // clampSnippet bounds a snippet by runes and keeps its highlight markers
-// balanced, so a truncated fragment never leaves an unclosed <mark> in the view.
+// balanced, so a truncated fragment never opens a highlight it does not close.
 func clampSnippet(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	runes := []rune(trimmed)

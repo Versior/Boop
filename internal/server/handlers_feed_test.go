@@ -131,6 +131,74 @@ func TestFeedServesValidRSS(t *testing.T) {
 	}
 }
 
+// Markdown must reach a reader as text: the description carries the visible
+// words only, and the XML encoder escapes whatever is left. Excerpts are authored
+// as plain text and keep their own path.
+func TestFeedDescriptionRendersMarkdownAsText(t *testing.T) {
+	f := newAuthFixture(t)
+	body := "# 文章小标题\n\n一段 **粗体** 文字与 [站内链接](/p/other)，还有 `代码片段`。\n\n" +
+		"<script>alert(1)</script>\n\n<img src=x onerror=alert(2)>\n\n引用 &amp; 实体 < 符号"
+	id := f.insertPost(t, "markdown", content.TypeArticle, content.StatusPublished,
+		"Markdown 描述", body, "", "2026-01-03T00:00:00Z")
+	// The stored body_html, the assets and the tags are not part of the feed's
+	// projection, so markers in them must never appear in the document.
+	if _, err := f.db.Exec(`UPDATE posts SET body_html = '<p>BODY_HTML_ONLY_MARKER</p>' WHERE id = ?`, id); err != nil {
+		t.Fatalf("stamp body_html: %v", err)
+	}
+	if _, err := f.db.Exec(`INSERT INTO tags(name, slug) VALUES('TAG_ONLY_MARKER', 'tag-only-marker')`); err != nil {
+		t.Fatalf("insert tag: %v", err)
+	}
+	if _, err := f.db.Exec(`INSERT INTO post_tags(post_id, tag_id)
+		SELECT ?, id FROM tags WHERE name = 'TAG_ONLY_MARKER'`, id); err != nil {
+		t.Fatalf("link tag: %v", err)
+	}
+
+	raw := f.do(t, http.MethodGet, "/feed.xml", "", nil, nil).Body.String()
+	feed := parseFeed(t, raw)
+	if len(feed.Channel.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(feed.Channel.Items))
+	}
+	description := feed.Channel.Items[0].Description
+	for _, want := range []string{"文章小标题", "粗体", "站内链接", "代码片段", "引用 & 实体 < 符号"} {
+		if !strings.Contains(description, want) {
+			t.Errorf("description %q is missing %q", description, want)
+		}
+	}
+	for _, unwanted := range []string{
+		"#", "**", "/p/other", "`", "<h1", "<strong", "<a ", "<code", "alert(", "onerror",
+		"BODY_HTML_ONLY_MARKER", "TAG_ONLY_MARKER",
+	} {
+		if strings.Contains(description, unwanted) {
+			t.Errorf("description %q still carries %q", description, unwanted)
+		}
+	}
+	for _, unwanted := range []string{"BODY_HTML_ONLY_MARKER", "TAG_ONLY_MARKER"} {
+		if strings.Contains(raw, unwanted) {
+			t.Errorf("the feed read a column it must not project: %q", unwanted)
+		}
+	}
+	// The markup itself never survives: only the text of the entity does.
+	if !strings.Contains(raw, "引用 &amp; 实体 &lt; 符号") {
+		t.Errorf("the description is not XML-escaped text: %s", raw)
+	}
+}
+
+// A moment body is authored as plain text, so its description is folded to one
+// line without going through the Markdown renderer.
+func TestFeedDescriptionKeepsPlainTextBodiesIntact(t *testing.T) {
+	f := newAuthFixture(t)
+	f.insertPost(t, "moment-asterisk", content.TypeMoment, content.StatusPublished, "",
+		"1*2*3 与 # 井号开头的行", "", "2026-01-02T00:00:00Z")
+
+	feed := parseFeed(t, f.do(t, http.MethodGet, "/feed.xml", "", nil, nil).Body.String())
+	if len(feed.Channel.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(feed.Channel.Items))
+	}
+	if got := feed.Channel.Items[0].Description; got != "1*2*3 与 # 井号开头的行" {
+		t.Errorf("description = %q, want the plain text body unchanged", got)
+	}
+}
+
 func TestFeedUsesTheConfiguredBaseURL(t *testing.T) {
 	cfg := testConfig()
 	cfg.BaseURL = "https://blog.example.com"

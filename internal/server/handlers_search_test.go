@@ -79,7 +79,7 @@ func TestSearchPageStatesAndActiveNav(t *testing.T) {
 		if !strings.Contains(body, "输入关键词") {
 			t.Error("the blank search page does not invite a query")
 		}
-		if strings.Contains(body, "没有找到") || strings.Contains(body, "条结果") {
+		if strings.Contains(body, "没有找到") || strings.Contains(body, "本页") {
 			t.Error("the blank search page rendered a result state")
 		}
 	})
@@ -123,8 +123,49 @@ func TestSearchPageStatesAndActiveNav(t *testing.T) {
 		if !strings.Contains(body, `href="/p/escaped"`) {
 			t.Error("the result row does not link to the post")
 		}
-		if !strings.Contains(body, `1 条结果`) {
-			t.Error("the page does not report how many results it shows")
+		if !strings.Contains(body, `本页 1 条`) {
+			t.Error("the page does not report how many results this page shows")
+		}
+	})
+
+	t.Run("a title or excerpt hit is visible in the fragment", func(t *testing.T) {
+		// The snippet must come from the column that matched: a title-only hit
+		// otherwise renders a body prefix with nothing highlighted.
+		f.insertPost(t, "title-hit", content.TypeArticle, content.StatusPublished,
+			"独特标题词 命中", "正文里没有这个词。", "", "2026-01-04T00:00:00Z")
+
+		rec := f.do(t, http.MethodGet, "/search?q=独特标题词", "", nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `<mark>独特标题词</mark>`) {
+			t.Errorf("the title hit is not highlighted in the result row: %s", body)
+		}
+	})
+
+	t.Run("raw highlight markers cannot inject or unbalance markup", func(t *testing.T) {
+		// A stored body may contain the two control characters the search package
+		// uses as markers. They may only open or close a highlight: no fragment is
+		// ever trusted as HTML, so the worst case is a spurious <mark>, never
+		// injected markup or a broken tag structure.
+		f.insertPost(t, "markers", content.TypeArticle, content.StatusPublished,
+			"原生控制符",
+			"前段 \x02<em>注入</em>\x03 关键词 \x02尾部", "", "2026-01-05T00:00:00Z")
+
+		rec := f.do(t, http.MethodGet, "/search?q=关键词", "", nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		body := rec.Body.String()
+		if strings.Contains(body, "<em>") || strings.Contains(body, "<script>") {
+			t.Error("stored markup was rendered as markup")
+		}
+		if !strings.Contains(body, "&lt;em&gt;") {
+			t.Error("the stored text of the fragment is not escaped")
+		}
+		if open, closed := strings.Count(body, "<mark>"), strings.Count(body, "</mark>"); open != closed || open == 0 {
+			t.Errorf("highlights are unbalanced or missing: %d <mark> vs %d </mark>", open, closed)
 		}
 	})
 
@@ -137,8 +178,8 @@ func TestSearchPageStatesAndActiveNav(t *testing.T) {
 		if !strings.Contains(body, "没有找到“不存在的内容”") {
 			t.Error("the empty state does not repeat the escaped query")
 		}
-		if !strings.Contains(body, "0 条结果") {
-			t.Error("the empty state does not report zero results")
+		if !strings.Contains(body, "本页 0 条") {
+			t.Error("the empty state does not report zero results on this page")
 		}
 	})
 
@@ -149,7 +190,7 @@ func TestSearchPageStatesAndActiveNav(t *testing.T) {
 				t.Fatalf("query %q status = %d, want 200", query, rec.Code)
 			}
 			body := rec.Body.String()
-			if !strings.Contains(body, "0 条结果") {
+			if !strings.Contains(body, "本页 0 条") {
 				t.Errorf("query %q did not render the zero-result state", query)
 			}
 			for _, leak := range []string{"SQL logic error", "syntax error", "sqlite"} {
@@ -274,7 +315,9 @@ func TestSearchAPIEnvelopeAndFallbacks(t *testing.T) {
 			t.Errorf("first result = %v, want the newest published post", first)
 		}
 		snippet, _ := first["snippet"].(string)
-		if !strings.Contains(snippet, "\x02api\x03") {
+		// The fragment comes from whichever column matched best, so the marked term
+		// is compared case-insensitively and the markers themselves must survive.
+		if !strings.Contains(strings.ToLower(snippet), "\x02api\x03") {
 			t.Errorf("snippet %q does not carry the plain-text highlight markers", snippet)
 		}
 	})

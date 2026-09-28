@@ -15,7 +15,7 @@
       {{if .Prompted}}
       <p class="page-sub">输入关键词，搜索站长发布过的动态、文章与摄影。</p>
       {{else}}
-      <p class="page-sub">“{{.Query}}” · {{.ResultCount}} 条结果</p>
+      <p class="page-sub">“{{.Query}}” · 本页 {{.ResultCount}} 条</p>
       {{end}}
     </header>
 
@@ -24,7 +24,7 @@
       <p class="empty">没有找到“{{.Query}}”相关的内容，换个关键词试试。</p>
       {{end}}
       {{range .Results}}
-      <!-- 整行是一个链接：碎片高亮只在服务端转义之后才变成 <mark>。 -->
+      <!-- 整行是一个链接：片段只以纯文本片段给出，高亮由模板静态输出，不信任任何服务端 HTML。 -->
       <article class="result" data-type="{{.Type}}">
         <a class="result-link" href="{{.URL}}">
           <div class="result-head">
@@ -32,7 +32,7 @@
             <time datetime="{{.Datetime}}">{{.TimeLabel}}</time>
           </div>
           {{if .Title}}<h2 class="result-title">{{.Title}}</h2>{{end}}
-          <p class="result-snippet">{{if .Snippet}}{{.Snippet}}{{else}}{{.Excerpt}}{{end}}</p>
+          <p class="result-snippet">{{if .Snippet}}{{range .Snippet}}{{if .Mark}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}{{else}}{{.Excerpt}}{{end}}</p>
         </a>
       </article>
       {{end}}

@@ -1,7 +1,10 @@
 package server
 
 import (
+	"context"
+	"database/sql"
 	"encoding/xml"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -62,15 +65,57 @@ type rssGUID struct {
 	IsPermaLink bool   `xml:"isPermaLink,attr"`
 }
 
+// rssPost is the narrow projection the feed needs: the Markdown body is rendered
+// to description text, so the stored body_html, the assets, the tags and the
+// public counters are never read and never loaded. The feed is a machine-readable
+// copy of the newest headlines, not a page of the public feed.
+type rssPost struct {
+	Slug         string
+	Type         string
+	Title        string
+	BodyMarkdown string
+	Excerpt      string
+	PublishedAt  string
+}
+
+// rssPosts reads at most limit published, undeleted posts in the documented
+// public order, with one statement over the existing feed index.
+func rssPosts(ctx context.Context, db *sql.DB, limit int) ([]rssPost, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT slug, type, title, body_markdown, excerpt, COALESCE(published_at, '')
+		 FROM posts
+		 WHERE status = 'published' AND deleted_at IS NULL
+		 ORDER BY COALESCE(published_at, '') DESC, id DESC
+		 LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("rss: query: %w", err)
+	}
+	defer rows.Close()
+
+	posts := make([]rssPost, 0, limit)
+	for rows.Next() {
+		var post rssPost
+		if err := rows.Scan(&post.Slug, &post.Type, &post.Title, &post.BodyMarkdown,
+			&post.Excerpt, &post.PublishedAt); err != nil {
+			return nil, fmt.Errorf("rss: scan post: %w", err)
+		}
+		posts = append(posts, post)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rss: rows: %w", err)
+	}
+	return posts, nil
+}
+
 // handleFeed renders the RSS 2.0 feed of the newest published posts. Every link
 // is built from BOOP_BASE_URL: the request Host and forwarded headers are never
-// used, so a spoofed header cannot poison a reader's cache.
+// used, so a spoofed header cannot poison a reader's cache. The items come from a
+// narrow projection of the newest posts instead of the full public feed page,
+// because a reader needs headlines, links and a plain-text summary, not bodies,
+// assets or tags.
 func (s *server) handleFeed(w http.ResponseWriter, r *http.Request) {
 	values := s.displaySettings(r)
-	// The public feed order (published_at DESC, id DESC) is exactly the order RSS
-	// wants, and 50 is its documented maximum page size, so the feed reuses it
-	// instead of duplicating the query.
-	page, err := content.Feed(r.Context(), s.db, content.FeedOptions{Limit: rssItemLimit})
+	posts, err := rssPosts(r.Context(), s.db, rssItemLimit)
 	if err != nil {
 		s.logger.LogAttrs(r.Context(), slog.LevelError, "rss feed failed",
 			slog.String("error", err.Error()), slog.String("request_id", requestIDFrom(r.Context())))
@@ -85,22 +130,29 @@ func (s *server) handleFeed(w http.ResponseWriter, r *http.Request) {
 			Link:        s.cfg.BaseURL + "/",
 			Description: values.SiteDescription,
 			Language:    "zh-CN",
-			Items:       make([]rssItem, 0, len(page.Posts)),
+			Items:       make([]rssItem, 0, len(posts)),
 		},
 	}
-	for _, post := range page.Posts {
+	for _, post := range posts {
+		description, err := rssDescription(post)
+		if err != nil {
+			s.logger.LogAttrs(r.Context(), slog.LevelError, "rss description failed",
+				slog.String("error", err.Error()), slog.String("request_id", requestIDFrom(r.Context())))
+			writeFailure(w, r, http.StatusInternalServerError, "internal_error", "服务器内部错误")
+			return
+		}
 		link := s.cfg.BaseURL + postPagePrefix + post.Slug
 		feed.Channel.Items = append(feed.Channel.Items, rssItem{
 			Title:       rssItemTitle(post),
 			Link:        link,
 			GUID:        rssGUID{Value: link, IsPermaLink: true},
 			PubDate:     rssPubDate(post.PublishedAt),
-			Description: rssDescription(post),
+			Description: description,
 		})
 	}
-	if len(page.Posts) > 0 {
+	if len(posts) > 0 {
 		// The first item is the newest one, so it carries the build date.
-		feed.Channel.LastBuildDate = rssPubDate(page.Posts[0].PublishedAt)
+		feed.Channel.LastBuildDate = rssPubDate(posts[0].PublishedAt)
 	}
 
 	body, err := xml.MarshalIndent(feed, "", "  ")
@@ -128,7 +180,7 @@ func (s *server) handleFeedMethodFallback(w http.ResponseWriter, r *http.Request
 // rssItemTitle is deterministic: the article title when the author wrote one,
 // otherwise the bounded first non-empty line of the body, otherwise a type
 // fallback for a post that carries no text at all.
-func rssItemTitle(post content.Post) string {
+func rssItemTitle(post rssPost) string {
 	if title := strings.TrimSpace(post.Title); title != "" {
 		return clampRunes(title, rssTitleRunes)
 	}
@@ -143,14 +195,25 @@ func rssItemTitle(post content.Post) string {
 	return "新内容"
 }
 
-// rssDescription is plain text built from the excerpt, or from the body when the
-// author wrote no excerpt. The stored body_html is never emitted.
-func rssDescription(post content.Post) string {
-	source := post.Excerpt
-	if strings.TrimSpace(source) == "" {
-		source = post.BodyMarkdown
+// rssDescription is plain text. The author's excerpt is used when there is one,
+// because it is authored as plain text; otherwise an article body goes through
+// the shared Markdown pipeline and only its visible text is kept, so Markdown
+// syntax (headings, emphasis, link targets, code fences) and raw HTML never reach
+// the reader. A moment or photo caption is plain text already and is folded to
+// one line as-is. XML escaping is left to the encoder.
+func rssDescription(post rssPost) (string, error) {
+	if excerpt := strings.TrimSpace(post.Excerpt); excerpt != "" {
+		return clampRunes(oneLine(excerpt), rssDescriptionRunes), nil
 	}
-	return clampRunes(oneLine(source), rssDescriptionRunes)
+	source := post.BodyMarkdown
+	if post.Type == content.TypeArticle {
+		text, err := content.MarkdownPlainText(post.BodyMarkdown)
+		if err != nil {
+			return "", fmt.Errorf("rss: render description of %s: %w", post.Slug, err)
+		}
+		source = text
+	}
+	return clampRunes(oneLine(source), rssDescriptionRunes), nil
 }
 
 // oneLine collapses every whitespace run so a stored multi-line body becomes a

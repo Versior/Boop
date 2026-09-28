@@ -296,6 +296,27 @@ func TestSnippetIsPlainMarkedText(t *testing.T) {
 	}
 }
 
+// A match that only lives in the title or the excerpt must still produce a
+// fragment that shows it: the snippet is taken from whichever indexed column
+// matches best, not from a fixed body column that would render an unhighlighted
+// body prefix and hide the reason the row was returned.
+func TestSnippetUsesTheBestMatchingColumn(t *testing.T) {
+	f := newFixture(t)
+	f.insert("title-hit", "article", "published", "独特标记词 标题", "正文里没有这个词。", "", "2026-01-03T00:00:00Z")
+	f.insert("excerpt-hit", "article", "published", "普通标题", "正文里没有这个词。", "摘要里提到 独特标记词", "2026-01-02T00:00:00Z")
+	f.insert("body-hit", "article", "published", "普通标题", "正文里有 独特标记词。", "摘要里没有。", "2026-01-01T00:00:00Z")
+
+	page := f.search(Options{Query: "独特标记词"})
+	if len(page.Results) != 3 {
+		t.Fatalf("results = %v, want all three columns to match", slugsOf(page))
+	}
+	for _, result := range page.Results {
+		if !strings.Contains(result.Snippet, SnippetOpen+"独特标记词"+SnippetClose) {
+			t.Errorf("snippet of %s = %q, want the matched term from its own column", result.Slug, result.Snippet)
+		}
+	}
+}
+
 // ---------- pagination ----------
 
 func TestSearchPaginatesByPublishedAtAndID(t *testing.T) {

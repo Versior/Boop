@@ -2,8 +2,6 @@ package server
 
 import (
 	"errors"
-	stdhtml "html"
-	"html/template"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -29,15 +27,23 @@ type searchResultPayload struct {
 	UpdatedAt   string `json:"updated_at"`
 }
 
-// searchCard is one compact result row of the SSR stream. Snippet is the only
-// HTML the page trusts, and only because highlightSnippet escaped the stored
-// text before turning the search package's markers into <mark> tags.
+// snippetPart is one run of a search snippet. Text is always plain text, and Mark
+// only tells the template whether this run is a match: the markup is static in
+// the template and every part is escaped by html/template, so neither FTS output
+// nor stored post text is ever trusted as HTML.
+type snippetPart struct {
+	Text string
+	Mark bool
+}
+
+// searchCard is one compact result row of the SSR stream. Snippet carries the
+// fragment as escaped-by-the-template plain text, never as HTML.
 type searchCard struct {
 	Type      string
 	TypeLabel string
 	Title     string
 	Excerpt   string
-	Snippet   template.HTML
+	Snippet   []snippetPart
 	URL       string
 	Datetime  string
 	TimeLabel string
@@ -47,7 +53,10 @@ type searchCard struct {
 // rows and the same-origin link that continues them.
 type searchView struct {
 	pageView
-	Query       string
+	Query string
+	// ResultCount is how many rows this page carries, never how many a site-wide
+	// query would match: the page has no COUNT statement behind it, so it must not
+	// present its own length as a total.
 	ResultCount int
 	Results     []searchCard
 	LoadMoreURL string
@@ -119,7 +128,7 @@ func (s *server) handleSearchPage(w http.ResponseWriter, r *http.Request) {
 			TypeLabel: typeLabels[result.Type],
 			Title:     result.Title,
 			Excerpt:   result.Excerpt,
-			Snippet:   highlightSnippet(result.Snippet),
+			Snippet:   snippetParts(result.Snippet),
 			URL:       postPagePrefix + result.Slug,
 			Datetime:  datetime,
 			TimeLabel: label,
@@ -136,14 +145,34 @@ func (s *server) handleSearchPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, http.StatusOK, "search", view)
 }
 
-// highlightSnippet produces the only HTML the search stream trusts: the stored
-// fragment is escaped first, and only then are the search package's two internal
-// markers replaced. FTS output and post text are therefore never trusted HTML.
-func highlightSnippet(snippet string) template.HTML {
-	escaped := stdhtml.EscapeString(snippet)
-	escaped = strings.ReplaceAll(escaped, search.SnippetOpen, "<mark>")
-	escaped = strings.ReplaceAll(escaped, search.SnippetClose, "</mark>")
-	return template.HTML(escaped) //nolint:gosec // escaped above; only the trusted markers become tags
+// snippetParts splits a stored snippet on the two search markers and returns
+// plain-text runs, so the template decides the markup. A marker that survives in
+// the stored text (a body containing U+0002 or U+0003) can therefore only open or
+// close a highlight; it can neither inject HTML nor leave an unbalanced tag,
+// because every run is escaped and every <mark> is emitted by the template.
+func snippetParts(snippet string) []snippetPart {
+	if snippet == "" {
+		return nil
+	}
+	parts := make([]snippetPart, 0, 3)
+	marked := false
+	for len(snippet) > 0 {
+		// The markers are single-byte control characters, so the byte index of the
+		// earliest one is also its rune boundary.
+		index := strings.IndexAny(snippet, search.SnippetOpen+search.SnippetClose)
+		if index < 0 {
+			break
+		}
+		if text := snippet[:index]; text != "" {
+			parts = append(parts, snippetPart{Text: text, Mark: marked})
+		}
+		marked = snippet[index] == search.SnippetOpen[0]
+		snippet = snippet[index+1:]
+	}
+	if snippet != "" {
+		parts = append(parts, snippetPart{Text: snippet, Mark: marked})
+	}
+	return parts
 }
 
 // searchURL builds a same-origin link that preserves the query, so "加载更多"

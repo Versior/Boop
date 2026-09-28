@@ -463,6 +463,40 @@ func TestMomentBodyIsPlainText(t *testing.T) {
 	}
 }
 
+// MarkdownPlainText is the RSS description path: the visible text survives, the
+// syntax and every stored tag does not. Whitespace is collapsed only for the
+// comparison, because block boundaries are reported as newlines on purpose.
+func TestMarkdownPlainTextKeepsOnlyVisibleText(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{"heading", "# 标题", "标题"},
+		{"emphasis", "一段 **粗体** 与 *斜体* 文字", "一段 粗体 与 斜体 文字"},
+		{"link", "看 [站内链接](/p/x) 吧", "看 站内链接 吧"},
+		{"code span", "用 `代码片段` 说明", "用 代码片段 说明"},
+		{"fenced code", "```go\nfunc main() {}\n```", "func main() {}"},
+		{"list", "- 第一项\n- 第二项", "第一项 第二项"},
+		{"raw html block", "<script>alert(1)</script>\n\n正文", "正文"},
+		{"raw inline html", "行内 <b>粗体</b> 与 <img src=x onerror=alert(1)>", "行内 粗体 与"},
+		{"entities", "引用 &amp; 实体 < 符号", "引用 & 实体 < 符号"},
+		{"blank", "   \n  ", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			text, err := MarkdownPlainText(tc.source)
+			if err != nil {
+				t.Fatalf("MarkdownPlainText(%q): %v", tc.source, err)
+			}
+			got := strings.Join(strings.Fields(text), " ")
+			if got != tc.want {
+				t.Errorf("MarkdownPlainText(%q) = %q, want %q", tc.source, got, tc.want)
+			}
+		})
+	}
+}
+
 // ---------- slug allocation ----------
 
 func TestSlugCollisionGetsSuffix(t *testing.T) {
