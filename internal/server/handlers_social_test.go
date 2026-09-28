@@ -836,6 +836,14 @@ func TestAdminCommentsPage(t *testing.T) {
 
 func TestLoginRateLimitRefusesWithRetryAfter(t *testing.T) {
 	f := newSocialFixture(t)
+	// The login limiter runs on a manually advanced clock. Under real time the
+	// burst refills one token every loginRefill (6s), and the bcrypt work this
+	// test does - much slower under -race or a loaded machine - can outlast that
+	// window, letting "the same address stays limited" observe 401 instead of
+	// 429. A frozen clock makes the exhaustion a property of the test, not of
+	// how fast the machine is.
+	clock := newFakeClock()
+	f.srv.limiters.login = newLimiters(clock.Now).login
 	body := marshalJSON(t, map[string]any{"email": "reader@example.com", "password": "wrong password"})
 
 	var limited *httptest.ResponseRecorder
