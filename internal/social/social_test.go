@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"boop/internal/settings"
 	"boop/internal/store"
 )
 
@@ -35,6 +37,11 @@ func newFixture(t *testing.T) *fixture {
 	t.Cleanup(func() { _ = db.Close() })
 	if err := store.Migrate(db); err != nil {
 		t.Fatalf("store.Migrate: %v", err)
+	}
+	// A running server seeds the documented defaults at startup, and every
+	// comment write reads them from the same transaction.
+	if err := settings.Seed(context.Background(), db); err != nil {
+		t.Fatalf("settings.Seed: %v", err)
 	}
 
 	f := &fixture{db: db}
@@ -85,19 +92,29 @@ func insertPost(t *testing.T, db *sql.DB, title, status, stamp string) int64 {
 	return id
 }
 
-func (f *fixture) commentsEnabled() CommentOptions {
-	return CommentOptions{Enabled: true, Moderation: false}
-}
-
-func (f *fixture) comment(t *testing.T, actor Actor, body string, parent *int64, opts CommentOptions) *Comment {
+func (f *fixture) comment(t *testing.T, actor Actor, body string, parent *int64) *Comment {
 	t.Helper()
 	comment, err := CreateComment(context.Background(), f.db, CommentInput{
 		PostID: f.postID, Actor: actor, Body: body, ParentID: parent,
-	}, opts, testNow)
+	}, testNow)
 	if err != nil {
 		t.Fatalf("CreateComment(%q): %v", body, err)
 	}
 	return comment
+}
+
+// setComments writes the two comment switches the way the admin page will, so
+// tests exercise the same path a running server does instead of handing a
+// decision to CreateComment.
+func (f *fixture) setComments(t *testing.T, enabled, moderation bool) {
+	t.Helper()
+	ctx := context.Background()
+	if err := settings.Set(ctx, f.db, settings.KeyCommentsEnabled, enabled); err != nil {
+		t.Fatalf("enable comments: %v", err)
+	}
+	if err := settings.Set(ctx, f.db, settings.KeyCommentsModerationEnabled, moderation); err != nil {
+		t.Fatalf("set moderation: %v", err)
+	}
 }
 
 func readerActor(id int64) Actor { return Actor{ID: id} }
@@ -162,20 +179,20 @@ func TestCreateCommentValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := CreateComment(context.Background(), f.db, CommentInput{
 				PostID: f.postID, Actor: readerActor(f.readerID), Body: tc.body,
-			}, f.commentsEnabled(), testNow)
+			}, testNow)
 			assertCode(t, err, tc.code)
 		})
 	}
 
 	t.Run("exactly the limit", func(t *testing.T) {
-		comment := f.comment(t, readerActor(f.readerID), strings.Repeat("字", MaxCommentRunes), nil, f.commentsEnabled())
+		comment := f.comment(t, readerActor(f.readerID), strings.Repeat("字", MaxCommentRunes), nil)
 		if len([]rune(comment.Body)) != MaxCommentRunes {
 			t.Errorf("body runes = %d, want %d", len([]rune(comment.Body)), MaxCommentRunes)
 		}
 	})
 
 	t.Run("trimmed and approved without moderation", func(t *testing.T) {
-		comment := f.comment(t, readerActor(f.readerID), "  有前后空格  ", nil, f.commentsEnabled())
+		comment := f.comment(t, readerActor(f.readerID), "  有前后空格  ", nil)
 		if comment.Body != "有前后空格" {
 			t.Errorf("body = %q, want it trimmed", comment.Body)
 		}
@@ -188,16 +205,14 @@ func TestCreateCommentValidation(t *testing.T) {
 	})
 
 	t.Run("missing actor", func(t *testing.T) {
-		_, err := CreateComment(context.Background(), f.db, CommentInput{PostID: f.postID, Body: "x"},
-			f.commentsEnabled(), testNow)
+		_, err := CreateComment(context.Background(), f.db, CommentInput{PostID: f.postID, Body: "x"}, testNow)
 		if err == nil {
 			t.Fatal("CreateComment accepted a comment without an author")
 		}
 	})
 
 	t.Run("nil database", func(t *testing.T) {
-		_, err := CreateComment(context.Background(), nil, CommentInput{PostID: f.postID, Actor: readerActor(1), Body: "x"},
-			f.commentsEnabled(), testNow)
+		_, err := CreateComment(context.Background(), nil, CommentInput{PostID: f.postID, Actor: readerActor(1), Body: "x"}, testNow)
 		if err == nil {
 			t.Fatal("CreateComment accepted a nil database")
 		}
@@ -212,9 +227,11 @@ func TestCreateCommentHonoursSettings(t *testing.T) {
 	f := newFixture(t)
 
 	t.Run("comments disabled", func(t *testing.T) {
+		f.setComments(t, false, false)
+		t.Cleanup(func() { f.setComments(t, true, false) })
 		_, err := CreateComment(context.Background(), f.db, CommentInput{
 			PostID: f.postID, Actor: readerActor(f.readerID), Body: "还能评论吗",
-		}, CommentOptions{Enabled: false}, testNow)
+		}, testNow)
 		if !errors.Is(err, ErrCommentsDisabled) {
 			t.Fatalf("error = %v, want ErrCommentsDisabled", err)
 		}
@@ -224,7 +241,8 @@ func TestCreateCommentHonoursSettings(t *testing.T) {
 	})
 
 	t.Run("moderation holds readers", func(t *testing.T) {
-		comment := f.comment(t, readerActor(f.readerID), "读者发言", nil, CommentOptions{Enabled: true, Moderation: true})
+		f.setComments(t, true, true)
+		comment := f.comment(t, readerActor(f.readerID), "读者发言", nil)
 		if comment.Status != StatusPending {
 			t.Errorf("status = %q, want pending", comment.Status)
 		}
@@ -232,11 +250,123 @@ func TestCreateCommentHonoursSettings(t *testing.T) {
 	})
 
 	t.Run("the owner is always approved", func(t *testing.T) {
-		comment := f.comment(t, ownerActor(f.ownerID), "站长回复", nil, CommentOptions{Enabled: true, Moderation: true})
+		f.setComments(t, true, true)
+		comment := f.comment(t, ownerActor(f.ownerID), "站长回复", nil)
 		if comment.Status != StatusApproved {
 			t.Errorf("status = %q, want approved", comment.Status)
 		}
 	})
+}
+
+// TestCommentSettingsAreReadInsideTheTransaction pins the root cause of the
+// review finding: the status must follow the switches as they are inside the
+// comment transaction, not a value a caller read earlier. A stale read would
+// approve this comment.
+func TestCommentSettingsAreReadInsideTheTransaction(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	stale, err := settings.Load(ctx, f.db)
+	if err != nil {
+		t.Fatalf("settings.Load: %v", err)
+	}
+	if stale.CommentsModerationEnabled {
+		t.Fatal("the fixture is expected to start with moderation off")
+	}
+	f.setComments(t, stale.CommentsEnabled, true)
+
+	comment, err := CreateComment(ctx, f.db, CommentInput{
+		PostID: f.postID, Actor: readerActor(f.readerID), Body: "读者评论",
+	}, testNow)
+	if err != nil {
+		t.Fatalf("CreateComment: %v", err)
+	}
+	if comment.Status != StatusPending {
+		t.Errorf("status = %q, want pending: the stored switches decide, not an earlier read", comment.Status)
+	}
+}
+
+// TestCommentSettingsFailureRollsBack proves the fail-closed half of the same
+// rule: an unreadable switch refuses the write and leaves no row behind.
+func TestCommentSettingsFailureRollsBack(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := f.db.Exec(`UPDATE settings SET value_json = '"yes"' WHERE key = ?`,
+		settings.KeyCommentsModerationEnabled); err != nil {
+		t.Fatalf("corrupt setting: %v", err)
+	}
+
+	_, err := CreateComment(ctx, f.db, CommentInput{
+		PostID: f.postID, Actor: readerActor(f.readerID), Body: "设置坏了",
+	}, testNow)
+	if err == nil {
+		t.Fatal("a corrupt setting must fail the write, not guess")
+	}
+	if errors.Is(err, ErrCommentsDisabled) {
+		t.Errorf("error = %v, want the settings failure to surface", err)
+	}
+	if comments := countRows(t, f.db, "comments"); comments != 0 {
+		t.Errorf("comments = %d, want none after a failed settings read", comments)
+	}
+}
+
+// TestCommentStatusFollowsTheSwitchUnderConcurrency runs the write path in
+// parallel with a settings change in flight. Every call must still land on a
+// status the transaction itself observed, and a refused call must add no row.
+func TestCommentStatusFollowsTheSwitchUnderConcurrency(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	const workers = 8
+	create := func(body string) (*Comment, error) {
+		return CreateComment(ctx, f.db, CommentInput{
+			PostID: f.postID, Actor: readerActor(f.readerID), Body: body,
+		}, testNow)
+	}
+	// runParallel starts the writes together and returns the per-worker errors.
+	runParallel := func(t *testing.T, prefix string) []error {
+		t.Helper()
+		errs := make([]error, workers)
+		var wg sync.WaitGroup
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				_, errs[i] = create(fmt.Sprintf("%s %d", prefix, i))
+			}(i)
+		}
+		wg.Wait()
+		return errs
+	}
+
+	f.setComments(t, true, true)
+	for i, err := range runParallel(t, "并发") {
+		if err != nil {
+			t.Fatalf("worker %d: %v", i, err)
+		}
+	}
+	comments := countRows(t, f.db, "comments")
+	if comments != workers {
+		t.Fatalf("comments = %d, want %d", comments, workers)
+	}
+	pending, err := Queue(ctx, f.db, QueueOptions{Status: StatusPending})
+	if err != nil {
+		t.Fatalf("Queue: %v", err)
+	}
+	if len(pending) != workers {
+		t.Errorf("pending = %d, want every parallel comment to have observed moderation", len(pending))
+	}
+
+	// Disabled: every parallel write is refused and none of them leaves a row.
+	f.setComments(t, false, false)
+	for i, err := range runParallel(t, "关闭") {
+		if !errors.Is(err, ErrCommentsDisabled) {
+			t.Fatalf("worker %d error = %v, want ErrCommentsDisabled", i, err)
+		}
+	}
+	if after := countRows(t, f.db, "comments"); after != comments {
+		t.Errorf("comments = %d, want the %d rows from before: a refused write must not insert", after, comments)
+	}
 }
 
 // assertNotPublic checks that a comment id never reaches the public listing.
@@ -271,7 +401,7 @@ func TestCreateCommentRequiresAPublishedPost(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := CreateComment(context.Background(), f.db, CommentInput{
 				PostID: tc.postID, Actor: readerActor(f.readerID), Body: "看不见的内容",
-			}, f.commentsEnabled(), testNow)
+			}, testNow)
 			if !errors.Is(err, ErrNotFound) {
 				t.Fatalf("error = %v, want ErrNotFound", err)
 			}
@@ -284,10 +414,10 @@ func TestCreateCommentRequiresAPublishedPost(t *testing.T) {
 
 func TestReplyInvariants(t *testing.T) {
 	f := newFixture(t)
-	root := f.comment(t, readerActor(f.readerID), "顶层评论", nil, f.commentsEnabled())
+	root := f.comment(t, readerActor(f.readerID), "顶层评论", nil)
 
 	t.Run("reply to a top-level comment", func(t *testing.T) {
-		reply := f.comment(t, readerActor(f.otherID), "一级回复", &root.ID, f.commentsEnabled())
+		reply := f.comment(t, readerActor(f.otherID), "一级回复", &root.ID)
 		if reply.ParentID == nil || *reply.ParentID != root.ID {
 			t.Errorf("parent = %v, want %d", reply.ParentID, root.ID)
 		}
@@ -296,7 +426,7 @@ func TestReplyInvariants(t *testing.T) {
 	t.Run("second level is refused", func(t *testing.T) {
 		_, err := CreateComment(context.Background(), f.db, CommentInput{
 			PostID: f.postID, Actor: readerActor(f.otherID), Body: "二级回复", ParentID: &root.ID,
-		}, f.commentsEnabled(), testNow)
+		}, testNow)
 		if err != nil {
 			t.Fatalf("first reply failed: %v", err)
 		}
@@ -307,20 +437,20 @@ func TestReplyInvariants(t *testing.T) {
 		}
 		_, err = CreateComment(context.Background(), f.db, CommentInput{
 			PostID: f.postID, Actor: readerActor(f.readerID), Body: "三级回复", ParentID: &replyID,
-		}, f.commentsEnabled(), testNow)
+		}, testNow)
 		assertCode(t, err, "invalid_parent")
 	})
 
 	t.Run("parent from another post", func(t *testing.T) {
 		elsewhere := insertPost(t, f.db, "另一篇", "published", testNow.Format(time.RFC3339))
-		other := f.comment(t, readerActor(f.readerID), "另一篇的评论", nil, f.commentsEnabled())
+		other := f.comment(t, readerActor(f.readerID), "另一篇的评论", nil)
 		// Reparent the comment into the other post, then try to reply from here.
 		if _, err := f.db.Exec(`UPDATE comments SET post_id = ? WHERE id = ?`, elsewhere, other.ID); err != nil {
 			t.Fatalf("reparent: %v", err)
 		}
 		_, err := CreateComment(context.Background(), f.db, CommentInput{
 			PostID: f.postID, Actor: readerActor(f.otherID), Body: "跨文章回复", ParentID: &other.ID,
-		}, f.commentsEnabled(), testNow)
+		}, testNow)
 		assertCode(t, err, "invalid_parent")
 	})
 
@@ -328,15 +458,17 @@ func TestReplyInvariants(t *testing.T) {
 		unknown := int64(99999)
 		_, err := CreateComment(context.Background(), f.db, CommentInput{
 			PostID: f.postID, Actor: readerActor(f.otherID), Body: "回复不存在", ParentID: &unknown,
-		}, f.commentsEnabled(), testNow)
+		}, testNow)
 		assertCode(t, err, "invalid_parent")
 	})
 
 	t.Run("parent that is hidden", func(t *testing.T) {
-		pending := f.comment(t, readerActor(f.otherID), "待审核评论", nil, CommentOptions{Enabled: true, Moderation: true})
+		f.setComments(t, true, true)
+		t.Cleanup(func() { f.setComments(t, true, false) })
+		pending := f.comment(t, readerActor(f.otherID), "待审核评论", nil)
 		_, err := CreateComment(context.Background(), f.db, CommentInput{
 			PostID: f.postID, Actor: readerActor(f.readerID), Body: "回复待审核", ParentID: &pending.ID,
-		}, f.commentsEnabled(), testNow)
+		}, testNow)
 		assertCode(t, err, "invalid_parent")
 	})
 }
@@ -345,20 +477,25 @@ func TestReplyInvariants(t *testing.T) {
 
 func TestCommentsAreApprovedOrderedAndOneLevelDeep(t *testing.T) {
 	f := newFixture(t)
-	first := f.comment(t, readerActor(f.readerID), "第一条", nil, f.commentsEnabled())
-	second := f.comment(t, readerActor(f.otherID), "第二条", nil, f.commentsEnabled())
-	f.comment(t, readerActor(f.readerID), "待审核", nil, CommentOptions{Enabled: true, Moderation: true})
-	f.comment(t, readerActor(f.readerID), "已被拒绝的", nil, f.commentsEnabled())
-	f.comment(t, readerActor(f.readerID), "已删除的", nil, f.commentsEnabled())
+	first := f.comment(t, readerActor(f.readerID), "第一条", nil)
+	second := f.comment(t, readerActor(f.otherID), "第二条", nil)
+	f.setComments(t, true, true)
+	pending := f.comment(t, readerActor(f.readerID), "待审核", nil)
+	if pending.Status != StatusPending {
+		t.Fatalf("status = %q, want pending", pending.Status)
+	}
+	f.setComments(t, true, false)
+	f.comment(t, readerActor(f.readerID), "已被拒绝的", nil)
+	f.comment(t, readerActor(f.readerID), "已删除的", nil)
 	if _, err := f.db.Exec(`UPDATE comments SET status = 'rejected' WHERE body = '已被拒绝的'`); err != nil {
 		t.Fatalf("reject: %v", err)
 	}
 	if _, err := f.db.Exec(`UPDATE comments SET deleted_at = ? WHERE body = '已删除的'`, testNow.Format(time.RFC3339)); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	reply := f.comment(t, readerActor(f.otherID), "对第一条的回复", &first.ID, f.commentsEnabled())
-	orphanParent := f.comment(t, readerActor(f.readerID), "会被删除的父评论", nil, f.commentsEnabled())
-	f.comment(t, readerActor(f.readerID), "孤儿回复", &orphanParent.ID, f.commentsEnabled())
+	reply := f.comment(t, readerActor(f.otherID), "对第一条的回复", &first.ID)
+	orphanParent := f.comment(t, readerActor(f.readerID), "会被删除的父评论", nil)
+	f.comment(t, readerActor(f.readerID), "孤儿回复", &orphanParent.ID)
 	if _, err := f.db.Exec(`UPDATE comments SET deleted_at = ? WHERE id = ?`, testNow.Format(time.RFC3339), orphanParent.ID); err != nil {
 		t.Fatalf("delete parent: %v", err)
 	}
@@ -394,8 +531,8 @@ func TestCommentsAreApprovedOrderedAndOneLevelDeep(t *testing.T) {
 
 func TestCommentsHidesRepliesOfADeletedParent(t *testing.T) {
 	f := newFixture(t)
-	parent := f.comment(t, readerActor(f.readerID), "父评论", nil, f.commentsEnabled())
-	child := f.comment(t, readerActor(f.otherID), "子回复", &parent.ID, f.commentsEnabled())
+	parent := f.comment(t, readerActor(f.readerID), "父评论", nil)
+	child := f.comment(t, readerActor(f.otherID), "子回复", &parent.ID)
 
 	if err := DeleteComment(context.Background(), f.db, parent.ID, readerActor(f.readerID), testNow); err != nil {
 		t.Fatalf("DeleteComment: %v", err)
@@ -413,8 +550,8 @@ func TestCommentsHidesRepliesOfADeletedParent(t *testing.T) {
 	}
 
 	// A reply whose parent was rejected is hidden for the same reason.
-	rejected := f.comment(t, readerActor(f.readerID), "会被拒绝", nil, f.commentsEnabled())
-	f.comment(t, readerActor(f.otherID), "被拒绝评论的回复", &rejected.ID, f.commentsEnabled())
+	rejected := f.comment(t, readerActor(f.readerID), "会被拒绝", nil)
+	f.comment(t, readerActor(f.otherID), "被拒绝评论的回复", &rejected.ID)
 	if _, err := f.db.Exec(`UPDATE comments SET status = 'rejected' WHERE id = ?`, rejected.ID); err != nil {
 		t.Fatalf("reject parent: %v", err)
 	}
@@ -431,8 +568,8 @@ func TestCommentsHidesRepliesOfADeletedParent(t *testing.T) {
 
 func TestDeleteCommentAuthorization(t *testing.T) {
 	f := newFixture(t)
-	mine := f.comment(t, readerActor(f.readerID), "我写的", nil, f.commentsEnabled())
-	theirs := f.comment(t, readerActor(f.otherID), "别人写的", nil, f.commentsEnabled())
+	mine := f.comment(t, readerActor(f.readerID), "我写的", nil)
+	theirs := f.comment(t, readerActor(f.otherID), "别人写的", nil)
 
 	t.Run("another reader may not delete", func(t *testing.T) {
 		err := DeleteComment(context.Background(), f.db, theirs.ID, readerActor(f.readerID), testNow)
@@ -470,7 +607,8 @@ func TestDeleteCommentAuthorization(t *testing.T) {
 
 func TestModerationTransitions(t *testing.T) {
 	f := newFixture(t)
-	pending := f.comment(t, readerActor(f.readerID), "待审核", nil, CommentOptions{Enabled: true, Moderation: true})
+	f.setComments(t, true, true)
+	pending := f.comment(t, readerActor(f.readerID), "待审核", nil)
 
 	approved, err := Approve(context.Background(), f.db, pending.ID, testNow)
 	if err != nil {
@@ -529,9 +667,11 @@ func TestModerationTransitions(t *testing.T) {
 
 func TestModerationQueue(t *testing.T) {
 	f := newFixture(t)
-	pending := f.comment(t, readerActor(f.readerID), "待审核一", nil, CommentOptions{Enabled: true, Moderation: true})
-	f.comment(t, readerActor(f.otherID), "待审核二", nil, CommentOptions{Enabled: true, Moderation: true})
-	f.comment(t, readerActor(f.readerID), "已通过", nil, f.commentsEnabled())
+	f.setComments(t, true, true)
+	pending := f.comment(t, readerActor(f.readerID), "待审核一", nil)
+	f.comment(t, readerActor(f.otherID), "待审核二", nil)
+	f.setComments(t, true, false)
+	f.comment(t, readerActor(f.readerID), "已通过", nil)
 	if _, err := Reject(context.Background(), f.db, pending.ID, testNow); err != nil {
 		t.Fatalf("Reject: %v", err)
 	}

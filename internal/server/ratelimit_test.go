@@ -1,6 +1,9 @@
 package server
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -89,6 +92,86 @@ func TestLimiterRetryAfterShrinks(t *testing.T) {
 	}
 	if second <= 0 || second > 400*time.Millisecond {
 		t.Errorf("retry after = %v, want (0, 400ms]", second)
+	}
+}
+
+// TestGuardRateLimitStopsAtTheFirstBlockedKey pins the review finding: once the
+// first key (the address) is out of tokens, the keys behind it must not be spent
+// or even created, so a blocked address cannot grow the map with fresh mailboxes.
+func TestGuardRateLimitStopsAtTheFirstBlockedKey(t *testing.T) {
+	clock := newFakeClock()
+	s := &server{limiters: newLimiters(clock.Now)}
+	login := s.limiters.login
+	ip := ipKey("203.0.113.7:41000")
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+	for i := 0; i < loginBurst; i++ {
+		if !s.guardRateLimit(recorder, request, login, "login", ip, emailKey("same@example.com")) {
+			t.Fatalf("attempt %d was refused", i+1)
+		}
+	}
+	before := login.size()
+
+	fresh := emailKey("fresh@example.com")
+	recorder = httptest.NewRecorder()
+	if s.guardRateLimit(recorder, request, login, "login", ip, fresh) {
+		t.Fatal("the blocked address must be refused")
+	}
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want 429", recorder.Code)
+	}
+	if recorder.Header().Get("Retry-After") == "" {
+		t.Error("missing Retry-After header")
+	}
+	if login.size() != before {
+		t.Errorf("bucket count = %d, want %d: the email key behind a blocked address must not be created", login.size(), before)
+	}
+	login.mu.Lock()
+	_, created := login.buckets["login:"+fresh]
+	login.mu.Unlock()
+	if created {
+		t.Error("the email key behind a blocked address was created")
+	}
+	if _, created := login.buckets["login:"+emailKey("same@example.com")]; !created {
+		t.Error("the first key's own bucket should still be tracked")
+	}
+
+	// Once the address has refilled, a different mailbox is usable again.
+	clock.advance(loginRefill * loginBurst)
+	recorder = httptest.NewRecorder()
+	if !s.guardRateLimit(recorder, request, login, "login", ip, fresh) {
+		t.Fatalf("the address should be usable again after a full refill: %s", recorder.Body.String())
+	}
+	if _, created := login.buckets["login:"+fresh]; !created {
+		t.Error("an allowed request must consume its email key")
+	}
+}
+
+// TestEmailKeyIsFixedLengthAndNormalised keeps the bucket name from storing or
+// amplifying the presented address.
+func TestEmailKeyIsFixedLengthAndNormalised(t *testing.T) {
+	canonical := emailKey("reader@example.com")
+	for _, same := range []string{" reader@example.com ", "READER@EXAMPLE.COM", "\tReader@Example.Com\n"} {
+		if got := emailKey(same); got != canonical {
+			t.Errorf("emailKey(%q) = %q, want %q", same, got, canonical)
+		}
+	}
+
+	if other := emailKey("other@example.com"); other == canonical {
+		t.Error("different addresses must not share a bucket")
+	}
+	if strings.Contains(canonical, "@") || strings.Contains(canonical, "example.com") {
+		t.Errorf("the key must not carry the address: %q", canonical)
+	}
+
+	// A near-limit address must not produce a longer key than a short one.
+	long := emailKey(strings.Repeat("a", 60_000) + "@example.com")
+	if len(long) != len(canonical) {
+		t.Errorf("key length = %d, want the fixed %d", len(long), len(canonical))
+	}
+	if len(long) > 128 {
+		t.Errorf("key = %d bytes, want a fixed-size hash", len(long))
 	}
 }
 

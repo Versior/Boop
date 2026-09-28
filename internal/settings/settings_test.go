@@ -168,6 +168,64 @@ func TestLoadAppliesStoredValuesOverDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadTxReadsThroughTheCallersTransaction(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	if err := Seed(ctx, db); err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	defer tx.Rollback()
+
+	// An uncommitted change is only visible through this transaction, so seeing
+	// it proves the read went through the caller's transaction rather than a
+	// separate connection. (The pool holds one connection, so a read through db
+	// while this transaction is open could not even return.)
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE settings SET value_json = 'true' WHERE key = ?`, KeyCommentsModerationEnabled); err != nil {
+		t.Fatalf("update inside the transaction: %v", err)
+	}
+
+	values, err := LoadTx(ctx, tx)
+	if err != nil {
+		t.Fatalf("LoadTx: %v", err)
+	}
+	if !values.CommentsModerationEnabled {
+		t.Error("LoadTx did not see the transaction's own uncommitted value")
+	}
+	if values.SiteName != Defaults().SiteName {
+		t.Errorf("SiteName = %q, want the documented default", values.SiteName)
+	}
+}
+
+func TestLoadTxRejectsCorruptStoredValue(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	if err := Seed(ctx, db); err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE settings SET value_json = '"yes"' WHERE key = ?`, KeyCommentsEnabled); err != nil {
+		t.Fatalf("corrupt value: %v", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := LoadTx(ctx, tx); err == nil {
+		t.Fatal("LoadTx accepted a corrupt stored value")
+	}
+	if _, err := LoadTx(ctx, nil); err == nil {
+		t.Fatal("LoadTx accepted a nil transaction")
+	}
+}
+
 func TestLoadRejectsCorruptStoredValue(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()

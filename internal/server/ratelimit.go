@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"math"
 	"net/http"
 	"strconv"
@@ -36,7 +38,8 @@ const (
 
 	// sweepEvery bounds how often the map is scanned, and idleTTL is how long an
 	// untouched key may linger. A bucket that refills completely carries no
-	// state, so dropping it is always safe.
+	// state, so dropping it is always safe. The sweep runs on the first request
+	// after a minute has passed, not on a timer of its own.
 	sweepEvery = time.Minute
 	idleTTL    = 10 * time.Minute
 )
@@ -152,33 +155,39 @@ func userKey(id int64) string {
 	return "user:" + strconv.FormatInt(id, 10)
 }
 
-// emailKey scopes a limit to the presented address. It is only a bucket name, so
-// it uses a cheap lowercase form instead of full validation.
+// emailKey scopes a limit to the presented address. The address is unverified
+// input, so the key is its SHA-256: a fixed-length key cannot be inflated by a
+// long mailbox name, and the bucket name does not store the address itself.
+// Case and surrounding space are normalised away, as auth.NormalizeEmail does.
 func emailKey(email string) string {
-	return "email:" + strings.ToLower(strings.TrimSpace(email))
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email))))
+	return "email:" + hex.EncodeToString(sum[:])
 }
 
-// guardRateLimit consumes one token for every key of a limit. When any bucket is
-// empty the request is refused with 429, a Retry-After header and the number of
-// seconds in the body, so a client can back off without guessing.
+// guardRateLimit consumes one token from each key of a limit, in the caller's
+// order. The first key that is out of tokens ends the request: a caller who is
+// already blocked must not be able to spend, or even create, the keys behind it,
+// or a single banned address could keep growing the map with fresh mailboxes.
+// Callers that limit by address pass the address first.
 func (s *server) guardRateLimit(w http.ResponseWriter, r *http.Request, bucket *limiter, scope string, keys ...string) bool {
 	if bucket == nil {
 		return true
 	}
-	var retry time.Duration
 	for _, key := range keys {
 		if key == "" {
 			continue
 		}
-		// Every bucket is consumed, so a blocked caller cannot keep another key
-		// fresh by hammering the blocked one.
-		if allowed, wait := bucket.allow(scope + ":" + key); !allowed && wait > retry {
-			retry = wait
+		if allowed, wait := bucket.allow(scope + ":" + key); !allowed {
+			writeRateLimited(w, r, wait)
+			return false
 		}
 	}
-	if retry <= 0 {
-		return true
-	}
+	return true
+}
+
+// writeRateLimited answers 429 with the exact wait in both a Retry-After header
+// and the body, so a client can back off without guessing.
+func writeRateLimited(w http.ResponseWriter, r *http.Request, retry time.Duration) {
 	seconds := int(math.Ceil(retry.Seconds()))
 	if seconds < 1 {
 		seconds = 1
@@ -192,5 +201,4 @@ func (s *server) guardRateLimit(w http.ResponseWriter, r *http.Request, bucket *
 		"request_id":  requestIDFrom(r.Context()),
 		"retry_after": seconds,
 	})
-	return false
 }

@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"boop/internal/content"
+	"boop/internal/settings"
 )
 
 // Comment statuses as stored in the comments table (docs/DATABASE.md).
@@ -101,16 +102,13 @@ type CommentInput struct {
 	ParentID *int64
 }
 
-// CommentOptions are the two comment switches from docs/PRODUCT.md §5.3.
-type CommentOptions struct {
-	Enabled    bool
-	Moderation bool
-}
-
-// CreateComment stores a comment on a published post. The settings, the post
-// visibility and the reply invariants are all checked before the row exists, so
-// a rejected comment leaves nothing behind.
-func CreateComment(ctx context.Context, db *sql.DB, in CommentInput, opts CommentOptions, now time.Time) (*Comment, error) {
+// CreateComment stores a comment on a published post. The two comment switches
+// are read inside the same transaction that inserts the row, so the state that
+// decides the comment's status cannot change between the decision and the write;
+// a settings value that does not decode fails the call and rolls the transaction
+// back. The post visibility and the reply invariants are checked there too, so a
+// rejected comment leaves nothing behind.
+func CreateComment(ctx context.Context, db *sql.DB, in CommentInput, now time.Time) (*Comment, error) {
 	if db == nil {
 		return nil, errors.New("social: create comment: nil database")
 	}
@@ -120,20 +118,10 @@ func CreateComment(ctx context.Context, db *sql.DB, in CommentInput, opts Commen
 	if in.PostID <= 0 {
 		return nil, errors.New("social: create comment: post id is required")
 	}
-	if !opts.Enabled {
-		return nil, ErrCommentsDisabled
-	}
 
 	body := strings.TrimSpace(in.Body)
 	if runes := utf8.RuneCountInString(body); runes < MinCommentRunes || runes > MaxCommentRunes {
 		return nil, invalid("invalid_body", fmt.Sprintf("评论内容需为 %d 到 %d 个字", MinCommentRunes, MaxCommentRunes))
-	}
-
-	// The owner's own comments are always visible; readers wait for moderation
-	// when it is enabled (docs/PRODUCT.md §5.3).
-	status := StatusApproved
-	if !in.Actor.Owner && opts.Moderation {
-		status = StatusPending
 	}
 
 	tx, err := db.BeginTx(ctx, nil)
@@ -141,6 +129,24 @@ func CreateComment(ctx context.Context, db *sql.DB, in CommentInput, opts Commen
 		return nil, fmt.Errorf("social: comment begin: %w", err)
 	}
 	defer tx.Rollback()
+
+	// The switches belong to this transaction: a caller cannot pass a decision it
+	// read earlier, and a concurrent settings change cannot land between the read
+	// and the INSERT.
+	values, err := settings.LoadTx(ctx, tx)
+	if err != nil {
+		return nil, fmt.Errorf("social: comment settings: %w", err)
+	}
+	if !values.CommentsEnabled {
+		return nil, ErrCommentsDisabled
+	}
+
+	// The owner's own comments are always visible; readers wait for moderation
+	// when it is enabled (docs/PRODUCT.md §5.3).
+	status := StatusApproved
+	if !in.Actor.Owner && values.CommentsModerationEnabled {
+		status = StatusPending
+	}
 
 	var exists int
 	err = tx.QueryRowContext(ctx,

@@ -213,26 +213,19 @@ func (s *server) handleCreateCommentAPI(w http.ResponseWriter, r *http.Request) 
 	if !s.guardRateLimit(w, r, s.limiters.commentIP, "comment", ipKey(r.RemoteAddr)) {
 		return
 	}
-	values, err := settings.Load(r.Context(), s.db)
-	if err != nil {
-		// Fail closed: without readable settings we cannot know whether comments
-		// are open, and guessing would accept writes the site forbids.
-		s.logger.LogAttrs(r.Context(), slog.LevelError, "comment settings unavailable",
-			slog.String("error", err.Error()), slog.String("request_id", requestIDFrom(r.Context())))
-		writeFailure(w, r, http.StatusInternalServerError, "internal_error", "服务器内部错误")
-		return
-	}
 
 	var body createCommentRequest
 	if !s.readJSON(w, r, &body, socialJSONBytes) {
 		return
 	}
+	// The comment switches are read inside social's transaction, so nothing here
+	// has to guess whether comments are open.
 	comment, err := social.CreateComment(r.Context(), s.db, social.CommentInput{
 		PostID:   postID,
 		Actor:    social.Actor{ID: state.user.ID, Owner: state.user.IsOwner()},
 		Body:     body.Body,
 		ParentID: body.ParentID,
-	}, social.CommentOptions{Enabled: values.CommentsEnabled, Moderation: values.CommentsModerationEnabled}, time.Now())
+	}, time.Now())
 	if err != nil {
 		s.writeSocialFailure(w, r, "create comment", err)
 		return

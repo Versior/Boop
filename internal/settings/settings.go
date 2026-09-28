@@ -120,14 +120,32 @@ func Load(ctx context.Context, db *sql.DB) (Values, error) {
 	if db == nil {
 		return Values{}, errors.New("settings: load: nil database")
 	}
-	values := Defaults()
-	fields := fieldsOf(&values)
-
 	rows, err := db.QueryContext(ctx, `SELECT key, value_json FROM settings`)
 	if err != nil {
 		return Values{}, fmt.Errorf("settings: load: %w", err)
 	}
+	return decode(rows)
+}
+
+// LoadTx reads the same values inside a caller's transaction, so a write path can
+// decide on settings that cannot change between that read and its own writes. A
+// missing key still means the documented default; a stored value that does not
+// decode is an error, and the caller's transaction rolls back.
+func LoadTx(ctx context.Context, tx *sql.Tx) (Values, error) {
+	if tx == nil {
+		return Values{}, errors.New("settings: load: nil transaction")
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT key, value_json FROM settings`)
+	if err != nil {
+		return Values{}, fmt.Errorf("settings: load: %w", err)
+	}
+	return decode(rows)
+}
+
+func decode(rows *sql.Rows) (Values, error) {
 	defer rows.Close()
+	values := Defaults()
+	fields := fieldsOf(&values)
 
 	for rows.Next() {
 		var key, raw string
