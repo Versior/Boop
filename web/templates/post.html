@@ -1,0 +1,48 @@
+{{define "title"}}{{if .Title}}{{.Title}} · Boop{{else}}Boop{{end}}{{end}}
+{{define "content"}}
+    <article class="post post-detail" data-type="{{.Card.Type}}">
+      <span class="avatar" aria-hidden="true"><svg viewBox="0 0 48 48"><use href="#i-avatar"/></svg></span>
+      <div class="post-body">
+        <div class="post-head">
+          <span class="name">{{.OwnerName}}</span>
+          <span class="chip chip-owner">站长</span>
+          <span class="sep">·</span>
+          <time datetime="{{.Card.Datetime}}">{{.Card.TimeLabel}}</time>
+          <span class="chip chip-type">{{.Card.TypeLabel}}</span>
+        </div>
+
+        {{if .Title}}<h1 class="detail-title">{{.Title}}</h1>{{end}}
+
+        <div class="prose">{{.Body}}</div>
+
+        {{if .Card.ImageURL}}
+        <figure class="photo-card">
+          <img class="photo-art" src="{{.Card.ImageURL}}" alt="{{.Card.ImageAlt}}" decoding="async">
+          {{if or .Location .CapturedLabel}}
+          <figcaption class="photo-caption">
+            {{if .Location}}<span>{{.Location}}</span>{{end}}
+            {{if and .Location .CapturedLabel}}<span class="sep">·</span>{{end}}
+            {{if .CapturedLabel}}<span>{{.CapturedLabel}}</span>{{end}}
+          </figcaption>
+          {{end}}
+        </figure>
+        {{end}}
+
+        {{if .Tags}}
+        <ul class="tag-list">
+          {{range .Tags}}<li class="tag">{{.}}</li>{{end}}
+        </ul>
+        {{end}}
+
+        <div class="actions">
+          <span class="action comment" aria-label="评论 {{.Card.CommentCount}} 条">
+            <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-comment"/></svg><span class="count">{{.Card.CommentCount}}</span>
+          </span>
+          <span class="action like" aria-label="点赞 {{.Card.LikeCount}}">
+            <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-heart"/></svg><span class="count">{{.Card.LikeCount}}</span>
+          </span>
+          <a class="action permalink" href="/">返回首页</a>
+        </div>
+      </div>
+    </article>
+{{end}}

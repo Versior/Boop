@@ -28,9 +28,19 @@ func testConfig() config.Config {
 	}
 }
 
+// testServer serves the shell against a real migrated database, because the home
+// page now reads the feed and the settings.
 func testServer(t *testing.T, logger *slog.Logger) *server {
 	t.Helper()
-	return testServerWithDB(t, logger, nil)
+	db, err := store.Open(filepath.Join(t.TempDir(), "boop.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := store.Migrate(db); err != nil {
+		t.Fatalf("store.Migrate: %v", err)
+	}
+	return testServerWithDB(t, logger, db)
 }
 
 func testServerWithDB(t *testing.T, logger *slog.Logger, db *sql.DB) *server {
@@ -473,7 +483,7 @@ func TestReadyzReportsDatabaseState(t *testing.T) {
 	})
 
 	t.Run("no database wired", func(t *testing.T) {
-		rec := do(t, testServer(t, discardLogger()).handler(), http.MethodGet, "/readyz", nil)
+		rec := do(t, testServerWithDB(t, discardLogger(), nil).handler(), http.MethodGet, "/readyz", nil)
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("status = %d, want 503", rec.Code)
 		}

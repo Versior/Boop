@@ -145,7 +145,8 @@ func (s *server) sessionCookie(token string, expires time.Time) *http.Cookie {
 		Secure:   s.cfg.SecureCookies,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  expires,
-		MaxAge:   int(time.Until(expires).Seconds()),
+		// The cookie lifetime is the session TTL; Expires carries the exact instant.
+		MaxAge: int(expires.Sub(time.Now()).Round(time.Second).Seconds()),
 	}
 }
 
@@ -237,11 +238,12 @@ func decodeJSONBody(r *http.Request, dst any) error {
 }
 
 // readJSON decodes the body and reports the failure itself, returning false
-// when the caller must stop. It first narrows the body to maxAuthJSONBytes so
-// the upload ceiling cannot be reached through an authentication request.
-func (s *server) readJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+// when the caller must stop. The body is narrowed to maxBytes first, so no
+// handler can be made to buffer more than its own limit; auth requests and
+// content writes therefore have independent ceilings.
+func (s *server) readJSON(w http.ResponseWriter, r *http.Request, dst any, maxBytes int64) bool {
 	if r.Body != nil {
-		r.Body = http.MaxBytesReader(w, r.Body, maxAuthJSONBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 	}
 	if err := decodeJSONBody(r, dst); err != nil {
 		var tooLarge *http.MaxBytesError
@@ -271,7 +273,7 @@ func (s *server) handleRegisterAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body registerRequest
-	if !s.readJSON(w, r, &body) {
+	if !s.readJSON(w, r, &body, maxAuthJSONBytes) {
 		return
 	}
 
@@ -302,7 +304,7 @@ func (s *server) handleRegisterAPI(w http.ResponseWriter, r *http.Request) {
 // handleLoginAPI verifies credentials and rotates the session.
 func (s *server) handleLoginAPI(w http.ResponseWriter, r *http.Request) {
 	var body credentialsRequest
-	if !s.readJSON(w, r, &body) {
+	if !s.readJSON(w, r, &body, maxAuthJSONBytes) {
 		return
 	}
 	if strings.TrimSpace(body.Email) == "" || body.Password == "" {

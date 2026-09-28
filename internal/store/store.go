@@ -34,6 +34,13 @@ const (
 	maxOpenConns = 1
 )
 
+// DSN builds the connection string Open uses. Tests and tooling that need the
+// same pragmas through their own connector (for example to count statements)
+// must use it instead of duplicating the parameters.
+func DSN(path string) string {
+	return "file:" + filepath.ToSlash(path) + "?" + dsnParams
+}
+
 // Open creates the parent directory when needed and returns a pool configured
 // for the single-process deployment.
 func Open(path string) (*sql.DB, error) {
@@ -46,7 +53,7 @@ func Open(path string) (*sql.DB, error) {
 		}
 	}
 
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?"+dsnParams)
+	db, err := sql.Open("sqlite", DSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}

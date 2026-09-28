@@ -1,6 +1,6 @@
 # Boop HTTP API v0.1
 
-所有 JSON 接口位于 `/api/v1`。成功统一返回 `{"data":...}`；失败返回 `{"error":{"code":"...","message":"..."}}`。写接口要求 Session Cookie 和 `X-CSRF-Token`。列表使用游标 `cursor=<published_at,id>`，默认 20，最大 50。
+所有 JSON 接口位于 `/api/v1`。成功统一返回 `{"data":...}`；失败返回 `{"error":{"code":"...","message":"..."}}`。写接口要求 Session Cookie 和 `X-CSRF-Token`。列表使用游标 `cursor=<published_at,id>`，默认 20，最大 50；列表响应把下一游标作为 `data` 的兄弟字段返回：`{"data":[...],"next_cursor":"..."}`，最后一页为空字符串。内容写接口的 JSON 请求体上限为 512KiB（正文另有字段级上限），超限返回 413 `payload_too_large`。
 
 ## 公共与健康检查
 

@@ -57,7 +57,7 @@ func newServer(cfg config.Config, db *sql.DB, logger *slog.Logger) (*server, err
 // parsePages builds one isolated template set per page so pages cannot leak
 // definitions into each other.
 func parsePages() (map[string]*template.Template, error) {
-	names := []string{"home", "login", "register"}
+	names := []string{"home", "post", "login", "register"}
 	pages := make(map[string]*template.Template, len(names))
 	for _, name := range names {
 		tmpl, err := template.New(name).ParseFS(web.FS, "templates/base.html", "templates/"+name+".html")
@@ -76,6 +76,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
 	mux.HandleFunc("GET /login", s.handleLoginPage)
 	mux.HandleFunc("GET /register", s.handleRegisterPage)
+	mux.HandleFunc("GET /p/{slug}", s.handlePostPage)
+	mux.HandleFunc("GET /api/v1/posts", s.handlePostsAPI)
+	mux.HandleFunc("GET /api/v1/posts/{slug}", s.handlePostAPI)
+	mux.HandleFunc("/api/v1/posts/", s.handlePostsFallback)
+	mux.HandleFunc("POST /api/v1/admin/posts", s.handleCreatePostAPI)
+	mux.HandleFunc("PATCH /api/v1/admin/posts/{id}", s.handlePatchPostAPI)
+	mux.HandleFunc("DELETE /api/v1/admin/posts/{id}", s.handleDeletePostAPI)
+	mux.HandleFunc("/api/v1/admin/", s.handleAdminFallback)
 	mux.HandleFunc("POST /api/v1/auth/register", s.handleRegisterAPI)
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLoginAPI)
 	mux.HandleFunc("POST /api/v1/auth/logout", s.handleLogoutAPI)
@@ -94,8 +102,8 @@ func (s *server) handler() http.Handler {
 	return withRequestID(handler)
 }
 
-// pageView is the shell state every page provides; base.html reads .Filter to
-// mark the current navigation item and .CSRFToken for authenticated writes.
+// homeView was replaced by feedView once the feed existed; pageView remains the
+// shared shell state.
 type pageView struct {
 	Filter    string
 	CSRFToken string
@@ -109,23 +117,6 @@ func (s *server) shellView(r *http.Request, filter string) pageView {
 		view.CSRFToken = state.session.CSRFToken
 	}
 	return view
-}
-
-// homeView is the server-rendered state of the shell. Feed content arrives with
-// the publishing module; the filter already drives navigation state.
-type homeView struct {
-	pageView
-}
-
-func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
-	filter := r.URL.Query().Get("type")
-	switch filter {
-	case "", "article", "photo":
-	default:
-		writeFailure(w, r, http.StatusBadRequest, "invalid_type", "该内容筛选类型不存在")
-		return
-	}
-	s.render(w, r, http.StatusOK, "home", homeView{pageView: s.shellView(r, filter)})
 }
 
 // handleHealthz reports process liveness and never touches external systems.

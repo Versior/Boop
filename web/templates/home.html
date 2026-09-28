@@ -1,9 +1,110 @@
 {{define "content"}}
     <h1 class="sr-only">Boop 首页</h1>
 
+    {{if .Composer}}
+    <!-- 快捷发布器：仅站长登录时由服务端渲染，读者与游客 DOM 中不存在 -->
+    <section class="composer" id="composer" data-composer aria-label="快捷发布" tabindex="-1">
+      <span class="avatar" aria-hidden="true"><svg viewBox="0 0 48 48"><use href="#i-avatar"/></svg></span>
+      <form class="composer-body" data-composer-form action="/api/v1/admin/posts" method="post">
+        <label class="sr-only" for="composer-text">分享此刻发生的事</label>
+        <textarea class="composer-input" id="composer-text" data-composer-text rows="1"
+          placeholder="分享此刻发生的事…" aria-label="分享此刻发生的事"></textarea>
+
+        <div class="composer-extra" data-composer-extra hidden>
+          <label class="sr-only" for="composer-title">文章标题</label>
+          <input class="composer-title" id="composer-title" data-composer-title type="text" maxlength="160"
+            placeholder="添加标题" aria-label="文章标题" hidden>
+
+          <div class="composer-drop" data-composer-drop hidden>
+            <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-image"/></svg>
+            <span>摄影模式需要一张图片；图片上传将在后续版本提供，现在发布会得到校验错误。</span>
+          </div>
+
+          <label class="sr-only" for="composer-tags">标签</label>
+          <input class="composer-extra-input" id="composer-tags" data-composer-tags type="text" maxlength="200"
+            placeholder="标签，用逗号分隔" aria-label="标签" hidden>
+
+          <label class="sr-only" for="composer-excerpt">摘要</label>
+          <input class="composer-extra-input" id="composer-excerpt" data-composer-excerpt type="text" maxlength="300"
+            placeholder="摘要（可选）" aria-label="摘要" hidden>
+
+          <div class="composer-bar">
+            <div class="pick" role="group" aria-label="内容类型">
+              <button class="pick-opt" type="button" data-mode="moment" aria-pressed="{{if eq .ComposerMode "moment"}}true{{else}}false{{end}}">动态</button>
+              <button class="pick-opt" type="button" data-mode="article" aria-pressed="{{if eq .ComposerMode "article"}}true{{else}}false{{end}}">文章</button>
+              <button class="pick-opt" type="button" data-mode="photo" aria-pressed="{{if eq .ComposerMode "photo"}}true{{else}}false{{end}}">摄影</button>
+            </div>
+            <span class="composer-count" data-composer-count aria-hidden="true">0/2000</span>
+            <button class="composer-post" data-composer-submit type="submit" disabled>发布</button>
+          </div>
+          <p class="composer-error" data-composer-error role="alert" hidden></p>
+        </div>
+      </form>
+      <noscript>
+        <p class="composer-error">发布需要 JavaScript：页面会把内容以 JSON 提交到站内接口。</p>
+      </noscript>
+    </section>
+    {{end}}
+
     <div class="stream" id="stream">
+      {{if .Empty}}
       <p class="empty">这里还没有公开内容。</p>
+      {{end}}
+      {{range .Posts}}
+      <article class="post" data-type="{{.Type}}">
+        <span class="avatar" aria-hidden="true"><svg viewBox="0 0 48 48"><use href="#i-avatar"/></svg></span>
+        <div class="post-body">
+          <div class="post-head">
+            <span class="name">{{$.OwnerName}}</span>
+            <span class="chip chip-owner">站长</span>
+            <span class="sep">·</span>
+            <time datetime="{{.Datetime}}">{{.TimeLabel}}</time>
+            <span class="chip chip-type">{{.TypeLabel}}</span>
+          </div>
+
+          {{if .Title}}
+          <div class="article-card">
+            <div class="article-copy">
+              <h2><a href="{{.URL}}">{{.Title}}</a></h2>
+              {{if .Excerpt}}<p>{{.Excerpt}}</p>{{end}}
+            </div>
+          </div>
+          {{end}}
+
+          {{if .Text}}<div class="post-text">{{.Text}}</div>{{end}}
+
+          {{if .ImageURL}}
+          <figure class="photo-card">
+            <img class="photo-art" src="{{.ImageURL}}" alt="{{.ImageAlt}}" loading="lazy" decoding="async">
+            {{if or .Location .CapturedLabel}}
+            <figcaption class="photo-caption">
+              {{if .Location}}<span>{{.Location}}</span>{{end}}
+              {{if and .Location .CapturedLabel}}<span class="sep">·</span>{{end}}
+              {{if .CapturedLabel}}<span>{{.CapturedLabel}}</span>{{end}}
+            </figcaption>
+            {{end}}
+          </figure>
+          {{end}}
+
+          <div class="actions">
+            <a class="action comment" href="{{.URL}}" aria-label="查看 {{.CommentCount}} 条评论">
+              <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-comment"/></svg><span class="count">{{.CommentCount}}</span>
+            </a>
+            <span class="action like" aria-label="点赞 {{.LikeCount}}">
+              <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-heart"/></svg><span class="count">{{.LikeCount}}</span>
+            </span>
+            <a class="action permalink" href="{{.URL}}">查看详情</a>
+          </div>
+        </div>
+      </article>
+      {{end}}
     </div>
 
+    {{if .LoadMoreURL}}
+    <p class="stream-more"><a class="load-more" href="{{.LoadMoreURL}}">加载更多</a></p>
+    {{end}}
+
     <p class="stream-end">Boop 上只有站长会发布内容，读者可以注册后参与评论与收藏</p>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden><span class="toast-msg" data-toast-message></span></div>
 {{end}}
