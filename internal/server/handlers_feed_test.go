@@ -258,6 +258,52 @@ func TestFeedEmptySiteIsStillValid(t *testing.T) {
 	}
 }
 
+// TestFeedQueryUsesTheFeedIndex pins the plan of the feed read: the statement must
+// be served by idx_posts_feed in index order. A COALESCE over published_at in the
+// projection or in the ORDER BY hides the indexed column and makes SQLite sort
+// the published rows into a temporary B-tree, so this test fails on exactly that
+// regression.
+func TestFeedQueryUsesTheFeedIndex(t *testing.T) {
+	f := newAuthFixture(t)
+	f.insertPost(t, "plan-newer", content.TypeMoment, content.StatusPublished, "",
+		"计划", "", "2026-01-03T00:00:00Z")
+	f.insertPost(t, "plan-older", content.TypeMoment, content.StatusPublished, "",
+		"计划", "", "2026-01-02T00:00:00Z")
+
+	rows, err := f.db.Query(`EXPLAIN QUERY PLAN `+rssQuery, rssItemLimit)
+	if err != nil {
+		t.Fatalf("explain query plan: %v", err)
+	}
+	defer rows.Close()
+
+	var steps []string
+	for rows.Next() {
+		// Since SQLite 3.24 the plan rows are (id, parent, notused, detail).
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatalf("plan row: %v", err)
+		}
+		steps = append(steps, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("plan rows: %v", err)
+	}
+	if len(steps) == 0 {
+		t.Fatal("the query plan is empty")
+	}
+	plan := strings.Join(steps, " | ")
+	if !strings.Contains(plan, "idx_posts_feed") {
+		t.Errorf("plan does not read the feed index: %s", plan)
+	}
+	// The plan text is version dependent, and older SQLite versions word the scan
+	// differently, so only the stable half is asserted here: an ORDER BY satisfied
+	// by the index needs no temporary sort at all.
+	if strings.Contains(strings.ToUpper(plan), "TEMP B-TREE") {
+		t.Errorf("plan sorts into a temporary B-tree: %s", plan)
+	}
+}
+
 func TestFeedRejectsOtherMethods(t *testing.T) {
 	f := newAuthFixture(t)
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {

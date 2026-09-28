@@ -78,15 +78,23 @@ type rssPost struct {
 	PublishedAt  string
 }
 
+// rssQuery is the documented narrow feed read. A post that reached status
+// 'published' always carries a non-empty published_at (content.Create and
+// content.Update stamp it on the first transition and freeze it afterwards), so
+// the statement orders on the stored column itself. The expression-free ORDER BY
+// is what lets SQLite read idx_posts_feed in index order; wrapping the column in
+// a COALESCE in the projection or in the ORDER BY would hide the indexed column
+// and force a temporary B-tree sort of every published row.
+const rssQuery = `SELECT slug, type, title, body_markdown, excerpt, published_at
+	FROM posts
+	WHERE status = 'published' AND deleted_at IS NULL
+	ORDER BY published_at DESC, id DESC
+	LIMIT ?`
+
 // rssPosts reads at most limit published, undeleted posts in the documented
 // public order, with one statement over the existing feed index.
 func rssPosts(ctx context.Context, db *sql.DB, limit int) ([]rssPost, error) {
-	rows, err := db.QueryContext(ctx,
-		`SELECT slug, type, title, body_markdown, excerpt, COALESCE(published_at, '')
-		 FROM posts
-		 WHERE status = 'published' AND deleted_at IS NULL
-		 ORDER BY COALESCE(published_at, '') DESC, id DESC
-		 LIMIT ?`, limit)
+	rows, err := db.QueryContext(ctx, rssQuery, limit)
 	if err != nil {
 		return nil, fmt.Errorf("rss: query: %w", err)
 	}

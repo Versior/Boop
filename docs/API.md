@@ -31,7 +31,7 @@
 RSS 规则（`GET /feed.xml`，公开）：
 
 - 响应 `Content-Type: application/rss+xml; charset=utf-8`，文档为 RSS 2.0；`channel` 带站点名称、简介、语言 `zh-CN`，有内容时带 `lastBuildDate`。
-- 只包含最新 50 条已发布且未删除的内容，顺序 `published_at DESC, id DESC`；不复用公共信息流的分页查询，而是一条只读 `slug`、`type`、`title`、`body_markdown`、`excerpt`、`published_at` 的窄查询，**不读** `body_html`、关联图片、标签、点赞与评论。
+- 只包含最新 50 条已发布且未删除的内容，顺序 `published_at DESC, id DESC`；不复用公共信息流的分页查询，而是一条只读 `slug`、`type`、`title`、`body_markdown`、`excerpt`、`published_at` 的窄查询，**不读** `body_html`、关联图片、标签、点赞与评论。物化顺序与接口契约不受影响：已发布行一定有非空 `published_at`，查询直接读这一列并直接按它排序（不套 `COALESCE`），这样排序能直接由 `idx_posts_feed` 满足，不再对已发布行做临时 B-tree 排序。
 - 每条 item：标题（文章标题，否则正文第一条非空行，否则按类型回退）、绝对永久链接 `/p/{slug}`、与链接相同的 `guid`（`isPermaLink="true"`）、RFC1123Z 的 `pubDate`、纯文本 `description`（上限 300 字）。
 - `description` 是**真正的纯文本**且自动 XML 转义：有摘要时用摘要（摘要本身按纯文本处理），否则渲染正文——文章正文经与存储 `body_html` 相同的 goldmark + bluemonday 流水线渲染后只取可见文本（标题号、`**粗体**` 标记、链接目标、代码围栏与原始 HTML 都不会出现），动态与摄影正文本身就是纯文本，只折叠为单行。**不输出 `body_html`，也不提供 `content:encoded`**。
 - 绝对链接只由 `BOOP_BASE_URL` 生成，永远不读请求 Host 或转发头。
