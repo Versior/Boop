@@ -16,5 +16,9 @@
     <button class="auth-submit" type="submit">登录</button>
     <noscript><p class="auth-note">登录需要 JavaScript：本页会把邮箱和密码以 JSON 提交到站点接口。</p></noscript>
   </form>
+
+  {{if .GitHubEnabled}}
+  <p class="auth-alt"><a class="auth-github" href="/auth/github/start?return_to=%2F">使用 GitHub 登录</a></p>
+  {{end}}
 </section>
 {{end}}

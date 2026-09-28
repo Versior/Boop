@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"boop/internal/secretbox"
 	"boop/internal/store"
 )
 
@@ -426,5 +427,268 @@ func TestSetStoresJSONAndTimestamp(t *testing.T) {
 	}
 	if rows != 1 {
 		t.Errorf("rows for the key = %d, want 1 (upsert)", rows)
+	}
+}
+
+// ---------- secret settings ----------
+
+// testBox builds a master key box; the fill byte decides which key it is.
+func testBox(t *testing.T, fill byte) *secretbox.Box {
+	t.Helper()
+	key := make([]byte, secretbox.KeyBytes)
+	for i := range key {
+		key[i] = fill
+	}
+	box, err := secretbox.New(key)
+	if err != nil {
+		t.Fatalf("secretbox.New: %v", err)
+	}
+	return box
+}
+
+func secretRow(t *testing.T, db *sql.DB, key string) (nonce, ciphertext []byte, ok bool) {
+	t.Helper()
+	err := db.QueryRow(`SELECT nonce, ciphertext FROM secret_settings WHERE key = ?`, key).Scan(&nonce, &ciphertext)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, false
+	}
+	if err != nil {
+		t.Fatalf("read secret row: %v", err)
+	}
+	return nonce, ciphertext, true
+}
+
+func TestApplyRequiresTheMasterKeyForSecrets(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	if err := Apply(ctx, db, nil, Update{Secrets: map[string]string{SecretKeyAIAPIKey: "sk-x"}}); !errors.Is(err, ErrMasterKeyRequired) {
+		t.Fatalf("secret write without a master key: error = %v, want ErrMasterKeyRequired", err)
+	}
+	if err := Apply(ctx, db, nil, Update{Clear: []string{SecretKeyAIAPIKey}}); !errors.Is(err, ErrMasterKeyRequired) {
+		t.Fatalf("secret clear without a master key: error = %v, want ErrMasterKeyRequired", err)
+	}
+	if _, _, ok := secretRow(t, db, SecretKeyAIAPIKey); ok {
+		t.Error("a refused secret write stored a row")
+	}
+
+	// Non-secret values stay writable without a master key.
+	if err := Apply(ctx, db, nil, Update{Values: map[string]any{KeySiteName: "没有主密钥"}}); err != nil {
+		t.Fatalf("value write without a master key: %v", err)
+	}
+	values, err := Load(ctx, db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if values.SiteName != "没有主密钥" {
+		t.Errorf("SiteName = %q", values.SiteName)
+	}
+}
+
+// TestApplyStoresSecretsEncryptedAndReadsThemBack is the round trip the
+// encrypted settings depend on: only the ciphertext reaches the database, and
+// only the matching master key can read it again.
+func TestApplyStoresSecretsEncryptedAndReadsThemBack(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	box := testBox(t, 7)
+	secret := "gho_client-secret-value"
+
+	if err := Apply(ctx, db, box, Update{
+		Values:  map[string]any{KeySiteName: "加密站点"},
+		Secrets: map[string]string{SecretKeyGitHubClientSecret: secret, SecretKeyAIAPIKey: "sk-ai"},
+	}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	nonce, ciphertext, ok := secretRow(t, db, SecretKeyGitHubClientSecret)
+	if !ok {
+		t.Fatal("the secret row is missing")
+	}
+	if len(nonce) != secretbox.NonceBytes {
+		t.Errorf("nonce = %d bytes, want %d", len(nonce), secretbox.NonceBytes)
+	}
+	if string(ciphertext) == secret || strings.Contains(string(ciphertext), secret) {
+		t.Error("the stored ciphertext contains the plaintext")
+	}
+
+	stored, err := ReadSecret(ctx, db, box, SecretKeyGitHubClientSecret)
+	if err != nil {
+		t.Fatalf("ReadSecret: %v", err)
+	}
+	if stored != secret {
+		t.Errorf("ReadSecret = %q, want %q", stored, secret)
+	}
+	// The same transaction also wrote the plain value.
+	values, err := Load(ctx, db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if values.SiteName != "加密站点" {
+		t.Errorf("SiteName = %q", values.SiteName)
+	}
+
+	// A second write replaces the value and the nonce.
+	if err := Apply(ctx, db, box, Update{Secrets: map[string]string{SecretKeyGitHubClientSecret: "rotated"}}); err != nil {
+		t.Fatalf("second Apply: %v", err)
+	}
+	if after, _, _ := secretRow(t, db, SecretKeyGitHubClientSecret); string(after) == string(nonce) {
+		t.Error("the nonce was reused for a new value")
+	}
+	rotated, err := ReadSecret(ctx, db, box, SecretKeyGitHubClientSecret)
+	if err != nil || rotated != "rotated" {
+		t.Fatalf("ReadSecret after rotation = %q, %v", rotated, err)
+	}
+	var rows int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM secret_settings WHERE key = ?`, SecretKeyGitHubClientSecret).Scan(&rows); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("rows = %d, want 1 (upsert)", rows)
+	}
+}
+
+func TestApplyRejectsBadSecretsAndWritesNothing(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	box := testBox(t, 3)
+
+	tests := []struct {
+		name   string
+		update Update
+	}{
+		{"empty value", Update{Secrets: map[string]string{SecretKeyAIAPIKey: ""}}},
+		{"oversized value", Update{Secrets: map[string]string{SecretKeyAIAPIKey: strings.Repeat("k", maxSecretBytes+1)}}},
+		{"unknown secret", Update{Secrets: map[string]string{"nope.secret": "x"}}},
+		{"unknown clear target", Update{Clear: []string{"nope.secret"}}},
+		{"invalid value beside a valid one", Update{
+			Values:  map[string]any{KeySiteName: "合法", KeyContentPageSize: 99},
+			Secrets: map[string]string{SecretKeyAIAPIKey: "sk-x"},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := Apply(ctx, db, box, tt.update); !errors.Is(err, ErrInvalidValue) {
+				t.Fatalf("error = %v, want ErrInvalidValue", err)
+			}
+			var settingsRows, secretRows int
+			if err := db.QueryRowContext(ctx, `SELECT count(*) FROM settings`).Scan(&settingsRows); err != nil {
+				t.Fatalf("count settings: %v", err)
+			}
+			if err := db.QueryRowContext(ctx, `SELECT count(*) FROM secret_settings`).Scan(&secretRows); err != nil {
+				t.Fatalf("count secrets: %v", err)
+			}
+			if settingsRows != 0 || secretRows != 0 {
+				t.Errorf("rows written: settings=%d secrets=%d, want none", settingsRows, secretRows)
+			}
+		})
+	}
+}
+
+func TestApplyClearsOnlyTheNamedSecret(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	box := testBox(t, 5)
+
+	if err := Apply(ctx, db, box, Update{Secrets: map[string]string{
+		SecretKeyGitHubClientSecret: "secret-value",
+		SecretKeyAIAPIKey:           "sk-ai",
+	}}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if err := Apply(ctx, db, box, Update{Clear: []string{SecretKeyGitHubClientSecret}}); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if _, _, ok := secretRow(t, db, SecretKeyGitHubClientSecret); ok {
+		t.Error("the cleared secret is still stored")
+	}
+	if _, err := ReadSecret(ctx, db, box, SecretKeyGitHubClientSecret); !errors.Is(err, ErrSecretNotFound) {
+		t.Errorf("ReadSecret after clear: error = %v, want ErrSecretNotFound", err)
+	}
+	if _, err := ReadSecret(ctx, db, box, SecretKeyAIAPIKey); err != nil {
+		t.Errorf("clearing one secret removed another: %v", err)
+	}
+	// Clearing an absent secret is harmless.
+	if err := Apply(ctx, db, box, Update{Clear: []string{SecretKeyGitHubClientSecret}}); err != nil {
+		t.Errorf("second clear: %v", err)
+	}
+}
+
+func TestReadSecretFailures(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	box := testBox(t, 1)
+	other := testBox(t, 2)
+
+	if _, err := ReadSecret(ctx, nil, box, SecretKeyAIAPIKey); err == nil {
+		t.Error("ReadSecret accepted a nil database")
+	}
+	if _, err := ReadSecret(ctx, db, box, "nope.secret"); !errors.Is(err, ErrUnknownSecretKey) {
+		t.Errorf("unknown key: error = %v, want ErrUnknownSecretKey", err)
+	}
+	if _, err := ReadSecret(ctx, db, nil, SecretKeyAIAPIKey); !errors.Is(err, ErrMasterKeyRequired) {
+		t.Errorf("nil box: error = %v, want ErrMasterKeyRequired", err)
+	}
+	if _, err := ReadSecret(ctx, db, box, SecretKeyAIAPIKey); !errors.Is(err, ErrSecretNotFound) {
+		t.Errorf("missing row: error = %v, want ErrSecretNotFound", err)
+	}
+
+	if err := Apply(ctx, db, box, Update{Secrets: map[string]string{SecretKeyAIAPIKey: "sk-ai"}}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if _, err := ReadSecret(ctx, db, other, SecretKeyAIAPIKey); err == nil {
+		t.Error("another master key decrypted the secret")
+	} else if strings.Contains(err.Error(), "sk-ai") {
+		t.Errorf("the failure message leaks the plaintext: %v", err)
+	}
+
+	// A tampered row fails the same way instead of returning garbage.
+	if _, err := db.ExecContext(ctx, `UPDATE secret_settings SET ciphertext = x'00' WHERE key = ?`, SecretKeyAIAPIKey); err != nil {
+		t.Fatalf("tamper: %v", err)
+	}
+	if _, err := ReadSecret(ctx, db, box, SecretKeyAIAPIKey); err == nil {
+		t.Error("a tampered row was accepted")
+	}
+}
+
+func TestConfiguredSecretsReportsEveryDocumentedKey(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	box := testBox(t, 9)
+
+	configured, err := ConfiguredSecrets(ctx, db)
+	if err != nil {
+		t.Fatalf("ConfiguredSecrets: %v", err)
+	}
+	for _, key := range []string{SecretKeyGitHubClientID, SecretKeyGitHubClientSecret, SecretKeyAIAPIKey} {
+		if value, ok := configured[key]; !ok || value {
+			t.Errorf("%s = %v, %v, want a reported false", key, value, ok)
+		}
+	}
+
+	if err := Apply(ctx, db, box, Update{Secrets: map[string]string{SecretKeyGitHubClientID: "client-id"}}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	// A row for a key the schema does not document is ignored rather than fatal.
+	if _, err := db.ExecContext(ctx, `INSERT INTO secret_settings(key, nonce, ciphertext, updated_at) VALUES('legacy.key', x'00', x'00', '2026-09-28T00:00:00Z')`); err != nil {
+		t.Fatalf("insert unknown secret: %v", err)
+	}
+
+	configured, err = ConfiguredSecrets(ctx, db)
+	if err != nil {
+		t.Fatalf("second ConfiguredSecrets: %v", err)
+	}
+	if !configured[SecretKeyGitHubClientID] {
+		t.Error("the stored client id is not reported as configured")
+	}
+	if configured[SecretKeyAIAPIKey] {
+		t.Error("an unstored secret is reported as configured")
+	}
+	if _, ok := configured["legacy.key"]; ok {
+		t.Error("an undocumented key appeared in the report")
+	}
+	// The report never needs the master key: it only checks for rows.
+	if _, err := ConfiguredSecrets(ctx, nil); err == nil {
+		t.Error("ConfiguredSecrets accepted a nil database")
 	}
 }

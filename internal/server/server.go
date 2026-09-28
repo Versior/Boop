@@ -17,7 +17,9 @@ import (
 	"strings"
 	"time"
 
+	"boop/internal/auth"
 	"boop/internal/config"
+	"boop/internal/secretbox"
 	"boop/internal/store"
 	"boop/web"
 )
@@ -35,6 +37,13 @@ type server struct {
 	logger   *slog.Logger
 	pages    map[string]*template.Template
 	limiters *limiters
+	// secrets is nil when BOOP_MASTER_KEY is not configured; every secret feature
+	// then fails closed instead of writing plaintext.
+	secrets *secretbox.Box
+	// github is the GitHub client. Its base URLs are fields so handler tests can
+	// point the flow at a local server.
+	github      auth.GitHubAPI
+	oauthStates *oauthStates
 }
 
 // New builds the Boop HTTP handler. It panics only when the embedded templates
@@ -53,13 +62,30 @@ func newServer(cfg config.Config, db *sql.DB, logger *slog.Logger) (*server, err
 	if err != nil {
 		return nil, err
 	}
-	return &server{cfg: cfg, db: db, logger: logger, pages: pages, limiters: newLimiters(time.Now)}, nil
+	// The master key is optional: without it every secret feature reports an
+	// unconfigured site instead of storing plaintext, so the box stays nil.
+	var box *secretbox.Box
+	if cfg.MasterKey != "" {
+		if box, err = secretbox.NewFromBase64(cfg.MasterKey); err != nil {
+			return nil, err
+		}
+	}
+	return &server{
+		cfg:         cfg,
+		db:          db,
+		logger:      logger,
+		pages:       pages,
+		limiters:    newLimiters(time.Now),
+		secrets:     box,
+		github:      auth.NewGitHubAPI(nil),
+		oauthStates: newOAuthStates(time.Now),
+	}, nil
 }
 
 // parsePages builds one isolated template set per page so pages cannot leak
 // definitions into each other.
 func parsePages() (map[string]*template.Template, error) {
-	names := []string{"home", "post", "login", "register", "bookmarks", "admin_comments"}
+	names := []string{"home", "post", "login", "register", "bookmarks", "admin_comments", "admin_settings"}
 	pages := make(map[string]*template.Template, len(names))
 	for _, name := range names {
 		tmpl, err := template.New(name).ParseFS(web.FS, "templates/base.html", "templates/"+name+".html")
@@ -80,7 +106,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /register", s.handleRegisterPage)
 	mux.HandleFunc("GET /p/{slug}", s.handlePostPage)
 	mux.HandleFunc("GET /bookmarks", s.handleBookmarksPage)
+	mux.HandleFunc("GET /admin", s.handleAdminIndex)
+	mux.HandleFunc("GET /admin/settings", s.handleAdminSettingsPage)
 	mux.HandleFunc("GET /admin/comments", s.handleAdminCommentsPage)
+	mux.HandleFunc("GET /auth/github/start", s.handleGitHubStart)
+	mux.HandleFunc("GET /auth/github/callback", s.handleGitHubCallback)
+	mux.HandleFunc("GET /api/v1/admin/settings", s.handleAdminSettingsAPI)
+	mux.HandleFunc("PATCH /api/v1/admin/settings", s.handlePatchSettingsAPI)
 	mux.HandleFunc("GET /api/v1/posts", s.handlePostsAPI)
 	mux.HandleFunc("GET /api/v1/posts/{slug}", s.handlePostAPI)
 	mux.HandleFunc("GET /api/v1/posts/{slug}/comments", s.handleCommentsAPI)

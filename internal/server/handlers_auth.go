@@ -349,16 +349,11 @@ func (s *server) handleLoginAPI(w http.ResponseWriter, r *http.Request) {
 	s.startSession(w, r, user, http.StatusOK)
 }
 
-// startSession rotates any presented session into a fresh one, sets both
-// cookies and answers with the account plus its CSRF token.
+// startSession rotates any presented session into a fresh one, sets the cookie
+// and answers with the account plus its CSRF token. The GitHub callback reuses
+// newSession because it needs the same rotation without a JSON answer.
 func (s *server) startSession(w http.ResponseWriter, r *http.Request, user auth.User, status int) {
-	session, err := auth.RotateSession(r.Context(), s.db, sessionTokenFrom(r), auth.NewSession{
-		UserID:    user.ID,
-		Now:       time.Now(),
-		TTL:       auth.DefaultSessionTTL,
-		UserAgent: r.UserAgent(),
-		IPPrefix:  ipPrefix(r.RemoteAddr),
-	})
+	session, err := s.newSession(r, user)
 	if err != nil {
 		s.logger.LogAttrs(r.Context(), slog.LevelError, "session creation failed",
 			slog.String("error", err.Error()), slog.String("request_id", requestIDFrom(r.Context())))
@@ -368,6 +363,18 @@ func (s *server) startSession(w http.ResponseWriter, r *http.Request, user auth.
 	http.SetCookie(w, s.sessionCookie(session.Token, session.ExpiresAt))
 	writeJSON(w, status, map[string]any{
 		"data": sessionPayload{User: userPayloadOf(user), CSRFToken: session.CSRFToken},
+	})
+}
+
+// newSession replaces any session presented by this request with a fresh one.
+// Every sign-in rotates, so a fixated cookie cannot survive it.
+func (s *server) newSession(r *http.Request, user auth.User) (auth.Session, error) {
+	return auth.RotateSession(r.Context(), s.db, sessionTokenFrom(r), auth.NewSession{
+		UserID:    user.ID,
+		Now:       time.Now(),
+		TTL:       auth.DefaultSessionTTL,
+		UserAgent: r.UserAgent(),
+		IPPrefix:  ipPrefix(r.RemoteAddr),
 	})
 }
 
@@ -417,13 +424,19 @@ var authRouteMethods = map[string]string{
 type authView struct {
 	pageView
 	RegistrationEnabled bool
+	// GitHubEnabled is true only when the stored OAuth client pair can be
+	// decrypted, so the page never offers a link that leads to a 503.
+	GitHubEnabled bool
 }
 
 func (s *server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	if s.redirectSignedIn(w, r) {
 		return
 	}
-	s.render(w, r, http.StatusOK, "login", authView{pageView: s.shellView(r, navNeutralFilter)})
+	s.render(w, r, http.StatusOK, "login", authView{
+		pageView:      s.shellView(r, navNeutralFilter),
+		GitHubEnabled: s.githubConfigured(r),
+	})
 }
 
 func (s *server) handleRegisterPage(w http.ResponseWriter, r *http.Request) {
@@ -451,4 +464,21 @@ func (s *server) redirectSignedIn(w http.ResponseWriter, r *http.Request) bool {
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 	return true
+}
+
+// githubConfigured reports whether the GitHub sign-in link can work: the master
+// key must be configured and both stored values must exist. It never decrypts,
+// so a display path can ask cheaply. A failure degrades to "not offered" with a
+// warning: the sign-in page still works with the password form.
+func (s *server) githubConfigured(r *http.Request) bool {
+	if s.secrets == nil {
+		return false
+	}
+	configured, err := settings.ConfiguredSecrets(r.Context(), s.db)
+	if err != nil {
+		s.logger.LogAttrs(r.Context(), slog.LevelWarn, "secret settings unavailable",
+			slog.String("error", err.Error()), slog.String("request_id", requestIDFrom(r.Context())))
+		return false
+	}
+	return configured[settings.SecretKeyGitHubClientID] && configured[settings.SecretKeyGitHubClientSecret]
 }

@@ -527,6 +527,63 @@
     });
   }
 
+  /* 站长设置：把表单以 PATCH JSON 提交；空密钥表示保持已保存的值。 */
+  function wireSettingsForm() {
+    var form = document.querySelector('[data-settings-form]');
+    if (!form) { return; }
+
+    var submit = form.querySelector('[data-settings-submit]');
+    var errorBox = form.querySelector('[data-settings-error]');
+    /* 这两个字段在服务端是整数，Number() 避免把 "20" 当成字符串提交。 */
+    var NUMBER_FIELDS = ['page_size', 'ai_author_status_ttl_hours'];
+
+    function show(message) {
+      if (!errorBox) { return; }
+      errorBox.textContent = message;
+      errorBox.hidden = false;
+    }
+
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      if (errorBox) { errorBox.hidden = true; }
+      if (submit) { submit.disabled = true; }
+
+      var payload = {};
+      var clear = [];
+      Array.prototype.forEach.call(form.elements, function (field) {
+        var name = field.getAttribute('name');
+        if (field.type === 'checkbox') {
+          if (name) { payload[name] = field.checked; }
+          return;
+        }
+        if (!name) { return; }
+        if (field.type === 'password') {
+          /* 留空的密钥字段不发送，服务端就不会覆盖已保存的密钥。 */
+          if (field.value) { payload[name] = field.value; }
+          return;
+        }
+        if (NUMBER_FIELDS.indexOf(name) >= 0) {
+          payload[name] = Number(field.value);
+          return;
+        }
+        payload[name] = field.value;
+      });
+      Array.prototype.forEach.call(form.querySelectorAll('[data-secret-clear]'), function (box) {
+        if (box.checked) { clear.push(box.getAttribute('data-secret-clear')); }
+      });
+      if (clear.length) { payload.clear_secret = clear; }
+
+      apiRequest(form.getAttribute('data-settings-action'), 'PATCH', payload).then(function () {
+        showToast('设置已保存');
+        /* 重新加载页面，让密钥的“已配置”状态和服务端渲染一起刷新。 */
+        window.setTimeout(function () { window.location.reload(); }, 900);
+      }).catch(function (error) {
+        if (submit) { submit.disabled = false; }
+        show(error.message || '保存失败，请稍后重试。');
+      });
+    });
+  }
+
   function wireSocial() {
     wireReactions();
     wireCommentForm();
@@ -543,6 +600,7 @@
 
     Array.prototype.forEach.call(document.querySelectorAll('[data-auth-form]'), wireAuthForm);
     wireComposer();
+    wireSettingsForm();
     wireSocial();
   });
 })();

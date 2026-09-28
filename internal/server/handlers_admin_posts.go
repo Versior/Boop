@@ -150,6 +150,7 @@ var adminRouteMethods = map[string]string{
 	"/api/v1/admin/posts":    http.MethodPost,
 	"/api/v1/admin/uploads":  http.MethodPost,
 	"/api/v1/admin/comments": http.MethodGet,
+	"/api/v1/admin/settings": http.MethodGet + ", " + http.MethodPatch,
 }
 
 // handleAdminFallback keeps every /api/v1/admin answer JSON.

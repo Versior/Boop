@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"boop/internal/secretbox"
 )
 
 // Bounds enforced by Set so no caller can store a value that renders the site
@@ -41,6 +43,45 @@ const (
 	KeyAIEmbeddingModel          = "ai.embedding_model"
 	KeyAIAuthorStatusTTLHours    = "ai.author_status_ttl_hours"
 )
+
+// Secret keys live in the secret_settings table and are encrypted with
+// BOOP_MASTER_KEY (docs/PRODUCT.md §5.4, docs/DATABASE.md). They are never
+// returned by an API and never appear in a log line.
+const (
+	SecretKeyGitHubClientID     = "github.client_id"
+	SecretKeyGitHubClientSecret = "github.client_secret"
+	SecretKeyAIAPIKey           = "ai.api_key"
+)
+
+// maxSecretBytes bounds one stored secret. An OAuth client secret or an API key
+// is far shorter, and the bound keeps a single request from writing a huge row.
+const maxSecretBytes = 512
+
+var (
+	// ErrInvalidValue marks a rejected settings value or key: the HTTP layer maps
+	// it to 400 without having to parse the reason.
+	ErrInvalidValue = errors.New("settings: value is not acceptable")
+	// ErrMasterKeyRequired is returned when a secret needs BOOP_MASTER_KEY and it
+	// is not configured, so the write fails closed instead of storing plaintext.
+	ErrMasterKeyRequired = errors.New("settings: BOOP_MASTER_KEY is not configured")
+	// ErrSecretNotFound means a documented secret has no stored row.
+	ErrSecretNotFound = errors.New("settings: secret is not configured")
+	// ErrUnknownSecretKey rejects a secret key the schema does not document.
+	ErrUnknownSecretKey = errors.New("settings: unknown secret key")
+)
+
+// secretKeys lists every documented secret setting, so callers can report
+// which ones are configured without knowing the list themselves.
+var secretKeys = []string{SecretKeyGitHubClientID, SecretKeyGitHubClientSecret, SecretKeyAIAPIKey}
+
+func knownSecretKey(key string) bool {
+	for _, known := range secretKeys {
+		if known == key {
+			return true
+		}
+	}
+	return false
+}
 
 // Values holds every non-secret setting with the documented defaults applied.
 type Values struct {
@@ -166,30 +207,175 @@ func decode(rows *sql.Rows) (Values, error) {
 	return values, nil
 }
 
-// Set validates and stores one known key as JSON, inserting or replacing the
-// row. An invalid value is rejected before the database is touched.
+// Set validates and stores one known non-secret key as JSON, inserting or
+// replacing the row. An invalid value is rejected before the database is touched.
 func Set(ctx context.Context, db *sql.DB, key string, value any) error {
+	return Apply(ctx, db, nil, Update{Values: map[string]any{key: value}})
+}
+
+// Update is one settings change. Values are validated, secrets are encrypted,
+// and every row lands in a single transaction, so a rejected field never leaves
+// a half-applied update behind.
+type Update struct {
+	// Values are non-secret settings keyed by their documented key.
+	Values map[string]any
+	// Secrets are secret settings to store; the plaintext is encrypted with the
+	// master key before the transaction opens.
+	Secrets map[string]string
+	// Clear names secret settings to delete.
+	Clear []string
+}
+
+// Apply validates and writes one settings change. Without BOOP_MASTER_KEY a
+// secret change fails with ErrMasterKeyRequired rather than storing plaintext.
+func Apply(ctx context.Context, db *sql.DB, box *secretbox.Box, update Update) error {
 	if db == nil {
-		return errors.New("settings: set: nil database")
+		return errors.New("settings: apply: nil database")
 	}
+
+	// Validate everything first: the database is only touched when the whole
+	// update is acceptable.
 	var probe Values
-	if _, known := fieldsOf(&probe)[key]; !known {
-		return fmt.Errorf("settings: set: unknown key %q", key)
+	fields := fieldsOf(&probe)
+	for key, value := range update.Values {
+		if _, known := fields[key]; !known {
+			return fmt.Errorf("%w: unknown key %q", ErrInvalidValue, key)
+		}
+		if err := validate(key, value); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidValue, err)
+		}
 	}
-	if err := validate(key, value); err != nil {
-		return err
+	if len(update.Secrets) > 0 || len(update.Clear) > 0 {
+		if box == nil {
+			return ErrMasterKeyRequired
+		}
 	}
-	raw, err := json.Marshal(value)
+	for key, value := range update.Secrets {
+		if !knownSecretKey(key) {
+			return fmt.Errorf("%w: unknown secret key %q", ErrInvalidValue, key)
+		}
+		switch {
+		case value == "":
+			return fmt.Errorf("%w: secret %s must not be empty", ErrInvalidValue, key)
+		case len(value) > maxSecretBytes:
+			return fmt.Errorf("%w: secret %s must be at most %d bytes", ErrInvalidValue, key, maxSecretBytes)
+		}
+	}
+	for _, key := range update.Clear {
+		if !knownSecretKey(key) {
+			return fmt.Errorf("%w: unknown secret key %q", ErrInvalidValue, key)
+		}
+	}
+
+	// Encrypt before the transaction: sealing is quick, but the write lock must
+	// not be held for work that can fail (the same rule password hashing follows).
+	type sealed struct{ nonce, ciphertext []byte }
+	sealedSecrets := make(map[string]sealed, len(update.Secrets))
+	for key, value := range update.Secrets {
+		nonce, ciphertext, err := box.Seal(value)
+		if err != nil {
+			return fmt.Errorf("settings: apply: encrypt %s: %w", key, err)
+		}
+		sealedSecrets[key] = sealed{nonce: nonce, ciphertext: ciphertext}
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("settings: set: encode %s: %w", key, err)
+		return fmt.Errorf("settings: apply: begin: %w", err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO settings(key, value_json, updated_at)
-		VALUES(?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-		ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
-		key, string(raw)); err != nil {
-		return fmt.Errorf("settings: set: %s: %w", key, err)
+	defer tx.Rollback()
+
+	for key, value := range update.Values {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Errorf("settings: apply: encode %s: %w", key, err)
+		}
+		if _, err := tx.ExecContext(ctx, upsertValueSQL, key, string(raw)); err != nil {
+			return fmt.Errorf("settings: apply: %s: %w", key, err)
+		}
+	}
+	for key, value := range sealedSecrets {
+		if _, err := tx.ExecContext(ctx, upsertSecretSQL, key, value.nonce, value.ciphertext); err != nil {
+			return fmt.Errorf("settings: apply: %s: %w", key, err)
+		}
+	}
+	for _, key := range update.Clear {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM secret_settings WHERE key = ?`, key); err != nil {
+			return fmt.Errorf("settings: apply: clear %s: %w", key, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("settings: apply: commit: %w", err)
 	}
 	return nil
+}
+
+const upsertValueSQL = `INSERT INTO settings(key, value_json, updated_at)
+	VALUES(?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+	ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`
+
+const upsertSecretSQL = `INSERT INTO secret_settings(key, nonce, ciphertext, updated_at)
+	VALUES(?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+	ON CONFLICT(key) DO UPDATE SET nonce = excluded.nonce, ciphertext = excluded.ciphertext, updated_at = excluded.updated_at`
+
+// ReadSecret decrypts one stored secret. A missing master key, an unknown key
+// and a missing row are separate answers, so a caller can tell an unconfigured
+// site from a broken one.
+func ReadSecret(ctx context.Context, db *sql.DB, box *secretbox.Box, key string) (string, error) {
+	if db == nil {
+		return "", errors.New("settings: read secret: nil database")
+	}
+	if !knownSecretKey(key) {
+		return "", fmt.Errorf("%w: %q", ErrUnknownSecretKey, key)
+	}
+	if box == nil {
+		return "", ErrMasterKeyRequired
+	}
+	var nonce, ciphertext []byte
+	err := db.QueryRowContext(ctx, `SELECT nonce, ciphertext FROM secret_settings WHERE key = ?`, key).
+		Scan(&nonce, &ciphertext)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("%w: %s", ErrSecretNotFound, key)
+	}
+	if err != nil {
+		return "", fmt.Errorf("settings: read secret %s: %w", key, err)
+	}
+	value, err := box.Open(nonce, ciphertext)
+	if err != nil {
+		return "", fmt.Errorf("settings: read secret %s: %w", key, err)
+	}
+	return value, nil
+}
+
+// ConfiguredSecrets reports which documented secret keys have a stored value.
+// It never decrypts, so a page can show whether a secret exists without holding
+// its plaintext.
+func ConfiguredSecrets(ctx context.Context, db *sql.DB) (map[string]bool, error) {
+	configured := make(map[string]bool, len(secretKeys))
+	for _, key := range secretKeys {
+		configured[key] = false
+	}
+	if db == nil {
+		return nil, errors.New("settings: configured secrets: nil database")
+	}
+	rows, err := db.QueryContext(ctx, `SELECT key FROM secret_settings`)
+	if err != nil {
+		return nil, fmt.Errorf("settings: configured secrets: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("settings: configured secrets: scan: %w", err)
+		}
+		if knownSecretKey(key) {
+			configured[key] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("settings: configured secrets: %w", err)
+	}
+	return configured, nil
 }
 
 // validate enforces the type and range of every known key. Values are checked

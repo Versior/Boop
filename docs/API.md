@@ -28,6 +28,14 @@
 
 密码 10–72 字节；邮箱最大 254 字符；登录与注册按 IP 和邮箱限速。所有认证失败使用相同外部错误信息。认证接口的 JSON 请求体上限为 64KiB，与 `BOOP_MAX_UPLOAD_MB` 上传预算无关，超限返回 413 `payload_too_large`。
 
+GitHub 登录规则：
+
+- `GET /auth/github/start` 生成一次性 state（32 字节随机，10 分钟有效），把它同时放进 `boop_oauth` Cookie（HttpOnly、SameSite=Lax、Path=/、Secure 跟随 `BOOP_SECURE_COOKIES`）并写入跳转 query，然后 302 到 GitHub。`return_to` 只接受同源路径（形如 `/bookmarks`）；绝对 URL、`//host`、含反斜杠或换行的值一律退回 `/`。同时挂起的登录流程总数上限为 1000，超出返回 503 `oauth_busy`；本地址超出限速时返回 429。
+- `GET /auth/github/callback` 要求 query 的 `state` 存在、未过期、未使用过，且与 Cookie 常量时间相等；state 无论成败都会被消费，重放一律 403 `oauth_state_invalid`。失败码：400 `oauth_code_missing`、400 `oauth_rejected`、502 `github_unavailable`、403 `email_unverified`、403 `registration_disabled`、403 `account_disabled`。
+- 已绑定的 GitHub 账号直接登录；否则仅当 GitHub 报告该邮箱 `verified`（取自 `/user/emails`）时才允许绑定已有账户或创建新账户，未验证邮箱一律 403 `email_unverified`，不写任何行。
+- GitHub 只能创建 `reader`；新账户不带密码哈希（`password_hash` 为 NULL），因此不能用密码登录。站点关闭公开注册后，已有账户仍可用密码或 GitHub 登录，也仍可把已验证邮箱绑定到已有账户；只有“创建新账户”会被 403 拒绝。
+- GitHub 登录失败返回统一状态页（带 request_id），不输出来自 GitHub 的令牌、授权码或客户端密钥。
+
 ## 限速（单进程内存令牌桶）
 
 | 动作 | 键 | 突发 | 持续补充 |
@@ -36,6 +44,7 @@
 | 注册 | 客户端地址、邮箱 | 5 | 每 2 分钟 1 次 |
 | 评论 | 登录用户 | 5 | 每 12 秒 1 次 |
 | 评论 | 客户端地址 | 30 | 每 2 秒 1 次 |
+| GitHub 登录（start 与 callback 各自计数） | 客户端地址 | 10 | 每 6 秒 1 次 |
 
 - 超限返回 429，响应头带 `Retry-After`（秒），响应体为 `{"error":{"code":"rate_limited","message":"请求过于频繁，请稍后再试"},"request_id":"...","retry_after":N}`。
 - 一次请求按调用方给定的顺序逐个消耗键，**第一个超限的键就立即返回 429**，不再消耗或创建其后的键。因此已被封禁的地址无法用不断更换的邮箱持续扩张内存，反向地，同一邮箱换地址刷也仍会被邮箱桶拦住。
@@ -100,11 +109,22 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/v1/admin/settings` | 返回非密钥设置及密钥是否已配置 |
-| PATCH | `/api/v1/admin/settings` | 白名单字段更新；空密钥表示保持不变，显式 `clear_secret=true` 才删除 |
-| POST | `/api/v1/admin/ai/test` | 最小请求验证配置，不回显密钥 |
-| POST | `/api/v1/admin/ai/author-status/regenerate` | 手动刷新作者状态，单飞 |
-| POST | `/api/v1/admin/ai/assist` | action=summary/tags/seo，输入草稿内容 |
-| POST | `/api/v1/admin/ai/chat` | v0.2 站内问答，SSE 输出 |
+| PATCH | `/api/v1/admin/settings` | 白名单字段更新；空密钥表示保持不变，显式 `clear_secret` 才删除 |
+| POST | `/api/v1/admin/ai/test` | 最小请求验证配置，不回显密钥（Task 8，未实现） |
+| POST | `/api/v1/admin/ai/author-status/regenerate` | 手动刷新作者状态，单飞（Task 8，未实现） |
+| POST | `/api/v1/admin/ai/assist` | action=summary/tags/seo，输入草稿内容（Task 8，未实现） |
+| POST | `/api/v1/admin/ai/chat` | v0.2 站内问答，SSE 输出（未实现） |
+
+设置接口规则：
+
+- 两个接口都只允许 owner：游客 401 `unauthorized`，读者 403 `forbidden`。
+- `GET` 返回 `site_name`、`site_description`、`site_timezone`、`page_size`、`registration_enabled`、`comments_enabled`、`comments_moderation_enabled`、`ai_enabled`、`ai_base_url`、`ai_chat_model`、`ai_embedding_model`、`ai_author_status_ttl_hours`，以及 `github_client_id_set`、`github_client_secret_set`、`ai_api_key_set`、`master_key` 四个布尔标志。**任何密钥明文都不会出现在响应里**，页面只知道某个密钥是否已配置。
+- `PATCH` 只接受上述字段加上三个密钥字段（`github_client_id`、`github_client_secret`、`ai_api_key`）和 `clear_secret`；上传目录、单文件大小与允许的 MIME 类型只能由环境变量配置，请求里出现即 400 `invalid_body`。
+- 密钥字段为空字符串表示**保持不变**（不会清空）；删除必须显式列出密钥名，例如 `{"clear_secret":["github.client_secret"]}`，删除不存在的密钥是幂等的；`clear_secret` 里的未知名返回 400 `invalid_settings`。
+- 值校验沿用 `internal/settings` 的类型与范围规则：非法值返回 400 `invalid_settings`，且**整次更新失败**——校验先于事务，不会出现部分字段已写入的状态。
+- 密钥用 `BOOP_MASTER_KEY` 的 AES-256-GCM 加密后存入 `secret_settings`，每次写入生成新的 nonce；未配置 `BOOP_MASTER_KEY` 时任何密钥写入或删除返回 409 `master_key_required`（非密钥字段仍可修改）。
+- 设置请求体上限为 64KiB，超限返回 413 `payload_too_large`。
+- 设置表损坏时 `GET` 与设置页返回 500，而不是用默认值渲染表单（避免把默认值保存回去覆盖真实设置）。
 
 ## HTML 页面
 
@@ -113,6 +133,8 @@
 - `GET /search?q=` 搜索结果 SSR。
 - `GET /login`、`GET /register`。
 - `GET /bookmarks` 登录用户收藏；游客重定向到 `/login`。
-- `GET /admin`（Task 7）、`GET /admin/comments`、`GET /admin/settings`（Task 7）站长页面；`/admin/comments` 的游客重定向到 `/login`，普通读者得到 403 HTML 页。
+- `GET /login` 在配置了 GitHub 客户端密钥时额外提供 `/auth/github/start` 登录入口。
+- `GET /admin` 站长管理入口，303 跳转到 `/admin/settings`；游客重定向到 `/login`，普通读者得到 403 HTML 页。
+- `GET /admin/comments`、`GET /admin/settings` 站长页面；两者的游客都重定向到 `/login`，普通读者得到 403 HTML 页。
 - 未知页面返回带 request_id 的统一 404；API 永远不返回 HTML 错误页。
 

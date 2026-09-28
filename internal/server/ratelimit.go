@@ -35,6 +35,10 @@ const (
 	// pre-create an unused limiter for them.
 	aiBurst  = 3
 	aiRefill = 20 * time.Second
+	// oauth: ten GitHub callbacks per address, then one every six seconds. Every
+	// accepted callback makes an outbound request, so an address cannot loop it.
+	oauthBurst  = 10
+	oauthRefill = 6 * time.Second
 
 	// sweepEvery bounds how often the map is scanned, and idleTTL is how long an
 	// untouched key may linger. A bucket that refills completely carries no
@@ -133,6 +137,7 @@ type limiters struct {
 	register  *limiter
 	comment   *limiter
 	commentIP *limiter
+	oauth     *limiter
 }
 
 func newLimiters(now func() time.Time) *limiters {
@@ -141,6 +146,7 @@ func newLimiters(now func() time.Time) *limiters {
 		register:  newLimiter(registerBurst, registerRefill, now),
 		comment:   newLimiter(commentBurst, commentRefill, now),
 		commentIP: newLimiter(commentIPBurst, commentIPRefill, now),
+		oauth:     newLimiter(oauthBurst, oauthRefill, now),
 	}
 }
 
