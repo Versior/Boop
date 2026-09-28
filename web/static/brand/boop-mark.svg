@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Boop</title>
+  <desc id="desc">A lowercase b with a blue signal dot.</desc>
+  <rect width="64" height="64" rx="18" fill="#0f1419"/>
+  <path d="M20 15v34M20 32c0-8 5.4-13.5 12.5-13.5S45 24 45 32s-5.4 13.5-12.5 13.5S20 40 20 32Z" fill="none" stroke="#fff" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="46.5" cy="15.5" r="4.5" fill="#1d9bf0"/>
+</svg>

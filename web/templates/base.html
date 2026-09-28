@@ -8,7 +8,7 @@
 <title>{{block "title" .}}{{.SiteName}}{{end}}</title>
 {{if .SiteDescription}}<meta name="description" content="{{.SiteDescription}}">{{end}}
 <link rel="alternate" type="application/rss+xml" title="{{.SiteName}}" href="/feed.xml">
-{{if .SiteAvatarURL}}<link rel="icon" href="{{.SiteAvatarURL}}">{{end}}
+{{if .SiteAvatarURL}}<link rel="icon" href="{{.SiteAvatarURL}}">{{else}}<link rel="icon" type="image/svg+xml" href="/static/brand/boop-mark.svg">{{end}}
 <link rel="stylesheet" href="/static/app.css">
 <script src="/static/app.js"></script>
 </head>
@@ -17,9 +17,8 @@
 <!-- ========== SVG 精灵：图标（内联，无外部资源） ========== -->
 <svg class="sprite" aria-hidden="true" focusable="false">
   <symbol id="i-logo" viewBox="0 0 24 24">
-    <path d="M14.8 4.29A8.2 8.2 0 1 1 9.2 4.29"/>
-    <circle cx="12" cy="12" r="4.2"/>
-    <circle cx="12" cy="12" r="1.7" fill="currentColor"/>
+    <path d="M6.8 4.2v15.6M6.8 12c0-3.7 2.5-6.2 5.8-6.2s5.8 2.5 5.8 6.2-2.5 6.2-5.8 6.2S6.8 15.7 6.8 12Z"/>
+    <circle cx="19" cy="4.4" r="1.8" fill="#1d9bf0" stroke="none"/>
   </symbol>
   <symbol id="i-home" viewBox="0 0 24 24">
     <path d="M4 10.6 12 4l8 6.6v8.8a1.6 1.6 0 0 1-1.6 1.6H5.6A1.6 1.6 0 0 1 4 19.4z"/>

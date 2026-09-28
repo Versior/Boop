@@ -182,6 +182,7 @@ func TestHomeRendersEmbeddedShell(t *testing.T) {
 		`class="bottom-nav"`,
 		`class="topbar"`,
 		`<link rel="stylesheet" href="/static/app.css">`,
+		`<link rel="icon" type="image/svg+xml" href="/static/brand/boop-mark.svg">`,
 		`<script src="/static/app.js"></script>`,
 		`action="/search"`,
 		`href="/?type=article"`,
@@ -252,6 +253,14 @@ func TestStaticAssetsServeDeterministicContentTypes(t *testing.T) {
 	}
 	if got := js.Header().Get("Content-Type"); got != "text/javascript; charset=utf-8" {
 		t.Errorf("app.js Content-Type = %q", got)
+	}
+
+	logo := do(t, handler, http.MethodGet, "/static/brand/boop-mark.svg", nil)
+	if logo.Code != http.StatusOK {
+		t.Fatalf("boop-mark.svg status = %d", logo.Code)
+	}
+	if got := logo.Header().Get("Content-Type"); got != "image/svg+xml" {
+		t.Errorf("boop-mark.svg Content-Type = %q", got)
 	}
 
 	if rec := do(t, handler, http.MethodGet, "/static/missing.css", nil); rec.Code != http.StatusNotFound {
