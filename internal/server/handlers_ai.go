@@ -123,23 +123,14 @@ func (s *server) aiConfig(ctx context.Context, values settings.Values) (ai.Confi
 	}, nil
 }
 
-// aiAvailable reports whether the writing assistant may be offered at all. It is
-// the cheap half of aiConfig: the composer only needs to know that the control
-// can work, and a control that could only fail is never rendered.
+// aiAvailable reports whether the writing assistant may be offered at all. It
+// asks the same resolution every AI route uses, so the composer only offers a
+// control that can actually work: the stored key must really decrypt, and a
+// missing BOOP_MASTER_KEY or a damaged ciphertext hides the control instead of
+// rendering one that could only fail.
 func (s *server) aiAvailable(ctx context.Context, values settings.Values) bool {
-	switch {
-	case !values.AIEnabled:
-		return false
-	case values.AIBaseURL == "" || values.AIChatModel == "":
-		return false
-	}
-	configured, err := settings.ConfiguredSecrets(ctx, s.db)
-	if err != nil {
-		s.logger.LogAttrs(ctx, slog.LevelWarn, "ai key availability unavailable",
-			slog.String("error", err.Error()), slog.String("request_id", requestIDFrom(ctx)))
-		return false
-	}
-	return configured[settings.SecretKeyAIAPIKey]
+	_, err := s.aiConfig(ctx, values)
+	return err == nil
 }
 
 // loadedSettings reads the settings for an owner-only AI route. Unlike a render

@@ -180,6 +180,16 @@ func readCacheRow(t *testing.T, db *sql.DB) (value, sourceUpdatedAt, lastError s
 	return value, sourceUpdatedAt, lastError, true
 }
 
+// readCacheStamps reads the two timestamps of the one cache row.
+func readCacheStamps(t *testing.T, db *sql.DB) (generatedAt, expiresAt string) {
+	t.Helper()
+	if err := db.QueryRow(`SELECT generated_at, expires_at FROM ai_cache WHERE cache_key = ?`, StatusCacheKey).
+		Scan(&generatedAt, &expiresAt); err != nil {
+		t.Fatalf("read cache stamps: %v", err)
+	}
+	return generatedAt, expiresAt
+}
+
 // ---------- client ----------
 
 func TestCompleteJoinsTheConfiguredBaseURL(t *testing.T) {
@@ -454,6 +464,97 @@ func TestDecideKeepsTheFallbackWhenTheStoredValueIsUnusable(t *testing.T) {
 	}
 }
 
+func TestDecideKeepsTheCacheWhenPublishedContentWentBackwards(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	// The stored value was generated from the newest post. Deleting or archiving
+	// that post lowers MAX(updated_at) instead of raising it, so there is nothing
+	// new to summarize and no upstream call is made.
+	for name, remove := range map[string]string{
+		"deleted":  `UPDATE posts SET deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE slug = 'newest'`,
+		"archived": `UPDATE posts SET status = 'archived' WHERE slug = 'newest'`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := testDB(t)
+			insertPost(t, db, "older", "article", "published", "旧标题", "旧正文", stamp(now.Add(-48*time.Hour)))
+			insertPost(t, db, "newest", "article", "published", "新标题", "新正文", stamp(now.Add(-time.Hour)))
+			if _, err := db.Exec(remove); err != nil {
+				t.Fatalf("remove the newest post: %v", err)
+			}
+			seedCache(t, db, "旧状态", nil, stamp(now.Add(-time.Hour)), now.Add(-time.Minute), now.Add(-time.Second))
+
+			status, refresh, err := Decide(t.Context(), db, now)
+			if err != nil {
+				t.Fatalf("Decide: %v", err)
+			}
+			if refresh {
+				t.Error("a revision that went backwards must not trigger a call")
+			}
+			if status.Text != "旧状态" || !status.Stale {
+				t.Errorf("status = %+v, want the stored value marked stale", status)
+			}
+		})
+	}
+}
+
+func TestDecideRefreshesWhenARevisionCannotBeCompared(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	// A timestamp that does not parse cannot prove the stored value is still
+	// accurate, so the conservative answer is a refresh rather than pinning it.
+	t.Run("stored revision", func(t *testing.T) {
+		db := testDB(t)
+		insertPost(t, db, "a", "article", "published", "标题", "正文", stamp(now.Add(-24*time.Hour)))
+		seedCache(t, db, "旧状态", nil, "not-a-time", now.Add(-48*time.Hour), now.Add(-time.Hour))
+
+		status, refresh, err := Decide(t.Context(), db, now)
+		if err != nil {
+			t.Fatalf("Decide: %v", err)
+		}
+		if !refresh {
+			t.Error("an unreadable stored revision must ask for a refresh")
+		}
+		if status.Text != "旧状态" || !status.Stale {
+			t.Errorf("status = %+v, want the stored value marked stale", status)
+		}
+	})
+
+	t.Run("live revision", func(t *testing.T) {
+		db := testDB(t)
+		insertPost(t, db, "a", "article", "published", "标题", "正文", "not-a-time")
+		seedCache(t, db, "旧状态", nil, stamp(now.Add(-24*time.Hour)), now.Add(-48*time.Hour), now.Add(-time.Hour))
+
+		if _, refresh, err := Decide(t.Context(), db, now); err != nil {
+			t.Fatalf("Decide: %v", err)
+		} else if !refresh {
+			t.Error("an unreadable live revision must ask for a refresh")
+		}
+	})
+}
+
+func TestDecideRegeneratesABrokenCacheInsteadOfBackingOff(t *testing.T) {
+	db := testDB(t)
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	// A row that lost its value but kept its generation timestamp is not the
+	// failure placeholder: it has no retry deadline, so published content makes it
+	// refresh at once instead of waiting out an unrelated expiry.
+	if _, err := db.Exec(`INSERT INTO ai_cache(cache_key, value_json, source_updated_at, generated_at, expires_at)
+		VALUES(?, 'not-json', ?, ?, ?)`,
+		StatusCacheKey, stamp(now), stamp(now), stamp(now.Add(24*time.Hour))); err != nil {
+		t.Fatalf("seed broken cache: %v", err)
+	}
+	insertPost(t, db, "a", "article", "published", "标题", "正文", stamp(now.Add(-time.Hour)))
+
+	status, refresh, err := Decide(t.Context(), db, now)
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if !refresh {
+		t.Error("a broken value must be regenerated, not backed off")
+	}
+	if !status.Default || status.Text != fallbackText {
+		t.Errorf("status = %+v, want the handwritten fallback", status)
+	}
+}
+
 func TestRefreshStoresABoundedStatus(t *testing.T) {
 	db := testDB(t)
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
@@ -506,6 +607,7 @@ func TestRefreshKeepsThePreviousValueOnFailure(t *testing.T) {
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	insertPost(t, db, "a", "article", "published", "标题", "正文", stamp(now))
 	seedCache(t, db, "旧状态", nil, stamp(now.Add(-72*time.Hour)), now.Add(-48*time.Hour), now.Add(-time.Hour))
+	beforeGeneratedAt, beforeExpiresAt := readCacheStamps(t, db)
 	u := newUpstream(t)
 	u.mu.Lock()
 	u.status = http.StatusBadGateway
@@ -522,6 +624,10 @@ func TestRefreshKeepsThePreviousValueOnFailure(t *testing.T) {
 	if !strings.Contains(value, "旧状态") || sourceUpdatedAt != stamp(now.Add(-72*time.Hour)) {
 		t.Errorf("value = %q source = %q, want the previous value untouched", value, sourceUpdatedAt)
 	}
+	generatedAt, expiresAt := readCacheStamps(t, db)
+	if generatedAt != beforeGeneratedAt || expiresAt != beforeExpiresAt {
+		t.Errorf("generated_at = %q expires_at = %q, want the stored timestamps untouched", generatedAt, expiresAt)
+	}
 	if lastError != CodeUpstream {
 		t.Errorf("last_error = %q, want %q", lastError, CodeUpstream)
 	}
@@ -533,6 +639,66 @@ func TestRefreshKeepsThePreviousValueOnFailure(t *testing.T) {
 	}
 	if status.Text != "旧状态" || !status.Stale || !refresh {
 		t.Errorf("status = %+v refresh = %v, want the previous value with a retry", status, refresh)
+	}
+}
+
+func TestRefreshRecordsAFirstFailureWithoutLeaking(t *testing.T) {
+	db := testDB(t)
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	insertPost(t, db, "a", "article", "published", "标题", "正文", stamp(now))
+	u := newUpstream(t)
+	u.mu.Lock()
+	u.status = http.StatusInternalServerError
+	u.raw = `{"error":"sk-live-secret in the upstream body"}`
+	u.mu.Unlock()
+
+	if _, err := Refresh(t.Context(), db, u.config(), testLogger(), now); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("err = %v, want upstream", err)
+	}
+	// A first failure leaves a minimal placeholder: the code, and nothing else.
+	value, sourceUpdatedAt, lastError, found := readCacheRow(t, db)
+	if !found {
+		t.Fatal("a first failure must still record its code")
+	}
+	if lastError != CodeUpstream {
+		t.Errorf("last_error = %q, want %q", lastError, CodeUpstream)
+	}
+	if value != "" || sourceUpdatedAt != "" {
+		t.Errorf("value = %q source = %q, want an empty placeholder", value, sourceUpdatedAt)
+	}
+	for _, secret := range []string{"sk-live-secret", "upstream body", testAPIKey} {
+		if strings.Contains(lastError, secret) {
+			t.Errorf("last_error %q carries %q", lastError, secret)
+		}
+	}
+	generatedAt, expiresAt := readCacheStamps(t, db)
+	if generatedAt != "" {
+		t.Errorf("generated_at = %q, want empty so the fallback renders", generatedAt)
+	}
+	if expiresAt != stamp(now.Add(failureBackoff)) {
+		t.Errorf("expires_at = %q, want the retry deadline %q", expiresAt, stamp(now.Add(failureBackoff)))
+	}
+
+	// The card shows the handwritten fallback, and the deadline keeps the model
+	// quiet instead of calling it on every visit.
+	status, refresh, err := Decide(t.Context(), db, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if !status.Default || status.Text != fallbackText || status.GeneratedAt != "" {
+		t.Errorf("status = %+v, want the handwritten fallback", status)
+	}
+	if refresh {
+		t.Error("the retry deadline must suppress another call")
+	}
+
+	// After the deadline the next visit may try again.
+	status, refresh, err = Decide(t.Context(), db, now.Add(failureBackoff+time.Second))
+	if err != nil {
+		t.Fatalf("Decide after the backoff: %v", err)
+	}
+	if !refresh || !status.Default {
+		t.Errorf("status = %+v refresh = %v, want a retry that still renders the fallback", status, refresh)
 	}
 }
 

@@ -712,6 +712,52 @@ func TestComposerAssistantIsOwnerOnly(t *testing.T) {
 	})
 }
 
+// TestComposerAssistantNeedsADecryptableKey covers the rule that the control is
+// rendered only when a call could actually work: a missing BOOP_MASTER_KEY and
+// a damaged ciphertext both hide it instead of offering a button that could only
+// fail, while the settings page keeps reporting that a key row exists.
+func TestComposerAssistantNeedsADecryptableKey(t *testing.T) {
+	t.Run("missing master key", func(t *testing.T) {
+		f := newAIFixture(t)
+		// The key row survives a restart without BOOP_MASTER_KEY; it simply cannot
+		// be decrypted any more.
+		cfg := f.cfg
+		cfg.MasterKey = ""
+		srv, err := newServer(cfg, f.db, discardLogger())
+		if err != nil {
+			t.Fatalf("newServer: %v", err)
+		}
+		f.srv, f.handler = srv, srv.handler()
+
+		page := f.do(t, http.MethodGet, "/", "", nil, f.cookie).Body.String()
+		if strings.Contains(page, "data-ai-assist") {
+			t.Error("a missing BOOP_MASTER_KEY must hide the assistant control")
+		}
+		if data := f.settingsData(t, f.getSettings(t, f.cookie)); data["ai_api_key_set"] != true {
+			t.Errorf("ai_api_key_set = %v, want the stored row to stay reported", data["ai_api_key_set"])
+		}
+	})
+
+	t.Run("damaged ciphertext", func(t *testing.T) {
+		f := newAIFixture(t)
+		if _, err := f.db.Exec(`UPDATE secret_settings SET ciphertext = X'00' WHERE key = ?`,
+			settings.SecretKeyAIAPIKey); err != nil {
+			t.Fatalf("damage the stored key: %v", err)
+		}
+		page := f.do(t, http.MethodGet, "/", "", nil, f.cookie).Body.String()
+		if strings.Contains(page, "data-ai-assist") {
+			t.Error("a damaged ciphertext must hide the assistant control")
+		}
+	})
+
+	t.Run("readable key", func(t *testing.T) {
+		f := newAIFixture(t)
+		if page := f.do(t, http.MethodGet, "/", "", nil, f.cookie).Body.String(); !strings.Contains(page, "data-ai-assist") {
+			t.Error("a decryptable key must keep offering the assistant")
+		}
+	})
+}
+
 func TestAIWrongMethodsAndUnknownPathsStayJSON(t *testing.T) {
 	f := newAIFixture(t)
 

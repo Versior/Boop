@@ -134,15 +134,16 @@ AI 接口规则：
 
 - 三个站长接口都只允许 owner 并要求 CSRF：游客 401 `unauthorized`，读者 403 `forbidden`，缺少 `X-CSRF-Token` 403 `csrf_invalid`，超限 429。
 - `GET /api/v1/ai/author-status` 是公开接口，返回 `{"data":{"text":"...","topics":["..."],"generated_at":"...","stale":false,"default":false}}`。`text` 是不超过 280 字的纯文本；`topics` 最多 5 个、每个不超过 24 字，可以为空；`default=true` 表示这是手写兑底文案（还没有生成结果）；`stale=true` 表示缓存已过期（可能还有内容更新待处理）。该接口只读缓存，**不在请求内调用模型**。
-- 缓存是 `ai_cache` 中唯一一行 `cache_key='author_status'`，值形如 `{"text":"...","topics":["..."]}`；`source_updated_at` 是生成时最新已发布内容的 `updated_at`，`expires_at` 由 `ai.author_status_ttl_hours`（默认 168 小时）决定。
-- 访问首页或该接口时的读取顺序：缓存仍新鲜则直接返回；缓存过期但**没有**比 `source_updated_at` 更新的已发布内容（或站点还没有已发布内容）时复用旧值且不调用模型；缓存过期且存在更新内容时立即返回旧值并在后台单飞刷新；完全没有缓存时立即返回手写兑底文案，并在有已发布内容时后台刷新。
+- 缓存是 `ai_cache` 中唯一一行 `cache_key='author_status'`，值形如 `{"text":"...","topics":["..."]}`；`source_updated_at` 是生成时最新已发布内容的 `updated_at`（与当前值按时间比较，不按字符串比较），`expires_at` 由 `ai.author_status_ttl_hours`（默认 168 小时）决定。
+- 访问首页或该接口时的读取顺序：缓存仍新鲜则直接返回；缓存过期但**没有**比 `source_updated_at` 更新的已发布内容（内容没变，或删除/归档让这个最大值回退）时复用旧值且不调用模型；缓存过期且最新内容**严格更新**时立即返回旧值并在后台单飞刷新；完全没有缓存时立即返回手写兑底文案，并在有已发布内容时后台刷新。时间戳无法解析时不能证明内容没变，按“可能更新”保守刷新。
 - 刷新永不阻塞首页渲染：它从请求上下文分离，但有 30 秒上限；全进程同一时刻只允许一个刷新（单飞），并发访问不会重复生成。
 - `POST /api/v1/admin/ai/author-status/regenerate` 是站长显式刷新，成功返回与公开接口相同的 `data`。已有刷新在跑时返回 409 `ai_busy`，不会启动第二个调用；站点从未发布内容时返回 409 `ai_no_content`。
-- 刷新失败保留旧值（或兑底文案），只在 `ai_cache.last_error` 写入一个稳定短码（`timeout`、`upstream`、`invalid_reply` 等）。日志只记录短码与上游状态码，**绝不记录 API Key、提示词、模型输出或上游响应体**；非 2xx、超时与响应超限都返回短而稳定的错误码。
+- 刷新失败保留旧值（或兑底文案），只在 `ai_cache.last_error` 写入一个稳定短码（`timeout`、`upstream`、`invalid_reply` 等）：已有可渲染值时**不覆盖** `value_json`、`source_updated_at`、`generated_at` 与 `expires_at`，只写短码；尚无任何可渲染值时写入一行最小失败占位行（`generated_at` 为空），它只带短码与固定的 5 分钟退避，因此首次失败也能被观察到、也仍然渲染手写兑底文案，且退避期内不会每次访问都打上游。日志只记录短码与上游状态码，**绝不记录 API Key、提示词、模型输出或上游响应体**；非 2xx、超时与响应超限都返回短而稳定的错误码。
 - `POST /api/v1/admin/ai/assist` 只接受 `action=summary|tags|seo` 与 `title`、`body`、`excerpt`、`tags` 四个草稿字段，未知字段一律 400 `invalid_body`（因此请求无法指向任何已保存内容）。标题、正文、摘要与标签全为空，或总字节数超过 16KiB，会在调用模型之前返回 400 `invalid_body`；未知 `action` 返回 400 `invalid_action`。
 - 助手响应分别为 `{"data":{"action":"summary","summary":"..."}}`、`{"data":{"action":"tags","tags":["..."]}}` 与 `{"data":{"action":"seo","seo_title":"...","seo_description":"..."}}`；上限是摘要 300 字、标签 8 个且每个 30 字（大小写不敏感去重）、SEO 标题 160 字、描述 300 字。**建议不会写入草稿**：只有站长在前端点“采用”时才会填入摘要或标签，SEO 只提供复制。
+- 首页快捷发布器里的 AI 助手控件只在站点启用 AI、Base URL 与对话模型非空，且 `ai.api_key` **能真正解密且非空**时渲染（与 GitHub 登录入口同一条规则）：缺少 `BOOP_MASTER_KEY` 或密文损坏时隐藏控件并写脱敏告警，而不是渲染一个必然失败的按钮；设置页仍会把 `ai_api_key_set` 报为已配置。
 - `POST /api/v1/admin/ai/test` 只做一次最小对话请求，成功返回 `{"data":{"ok":true,"model":"<配置的模型名>"}}`，不回显模型输出或任何密钥。
-- 模型回复必须是**一个**严格 JSON 对象：未知字段与尾随 JSON 一律按无法解析处理。失败码映射：未启用 409 `ai_disabled`，缺少 Base URL、模型或 API Key（含缺少 `BOOP_MASTER_KEY`）409 `ai_unconfigured`，超时 504 `ai_timeout`，非 2xx 502 `ai_upstream_error`，无法解析（含响应体超过 1MiB）502 `ai_invalid_reply`。AI 不可用时首页与缓存状态仍然可用。
+- 模型回复必须是**一个**严格 JSON 对象：未知字段与尾随 JSON 一律按无法解析处理。失败码映射：未启用 409 `ai_disabled`，缺少 Base URL、模型或 API Key（含缺少或换错 `BOOP_MASTER_KEY`、密文损坏）409 `ai_unconfigured`，超时 504 `ai_timeout`，非 2xx 502 `ai_upstream_error`，无法解析（含响应体超过 1MiB）502 `ai_invalid_reply`。AI 不可用时首页与缓存状态仍然可用。
 - AI 调用边界：单次 20 秒超时、单个响应最多 1MiB、提示词最多 48KiB，且全进程同时最多 2 个上游调用（适配 1 核 / 512MiB）。设置与密钥在每次调用时重新读取并解密，改动无需重启。
 
 ## HTML 页面

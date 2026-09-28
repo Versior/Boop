@@ -16,6 +16,13 @@ import (
 // StatusCacheKey is the single ai_cache row the author status owns.
 const StatusCacheKey = "author_status"
 
+// failureBackoff is how long a failure that left no renderable value keeps the
+// model out of reach before a later visit may try again. It is deliberately
+// short and fixed: the status is decorative, so retrying is cheap to want, but
+// the deadline is what stops a broken endpoint from being called once per page
+// view.
+const failureBackoff = 5 * time.Minute
+
 const (
 	// maxStatusRunes bounds the rendered status: the card is a short
 	// introduction, not an article.
@@ -73,15 +80,23 @@ type storedStatus struct {
 // stored is one decoded cache row plus the metadata that decides freshness.
 type stored struct {
 	Status
+	// usable reports whether the row carries a generated value the card can
+	// render.
+	usable bool
+	// placeholder marks the minimal failure row: no generated value and no
+	// generation timestamp, with expiresAt holding the moment a later visit may
+	// try the model again.
+	placeholder     bool
 	sourceUpdatedAt string
 	expiresAt       string
 }
 
 // Decide answers the read side of the author status without ever calling the
 // model: what to show now, and whether an upstream refresh is worth starting.
-// A value is reused while it is fresh, when no published content changed since
-// it was generated, and when nothing is published at all; only newer published
-// content asks for a refresh.
+// A value is reused while it is fresh, when the newest published revision is the
+// one it was generated from, and when that revision went backwards because
+// content was deleted or archived; only a strictly newer published revision asks
+// for a refresh.
 func Decide(ctx context.Context, db *sql.DB, now time.Time) (Status, bool, error) {
 	if db == nil {
 		return FallbackStatus(), false, errors.New("ai: author status: nil database")
@@ -89,6 +104,21 @@ func Decide(ctx context.Context, db *sql.DB, now time.Time) (Status, bool, error
 	cached, found, err := readCache(ctx, db)
 	if err != nil {
 		return FallbackStatus(), false, err
+	}
+	if found && !cached.usable {
+		// Nothing renderable is stored, so the card shows the handwritten
+		// fallback. A failure placeholder carries the deadline of its own
+		// failure: while it holds, the model is left alone instead of being
+		// called on every visit. A row that is merely broken has no such
+		// deadline and is regenerated as soon as there is content to summarize.
+		if cached.placeholder && fresh(cached.expiresAt, now) {
+			return FallbackStatus(), false, nil
+		}
+		newest, err := newestPublished(ctx, db)
+		if err != nil {
+			return FallbackStatus(), false, err
+		}
+		return FallbackStatus(), newest != "", nil
 	}
 	if found && fresh(cached.expiresAt, now) {
 		// The common path: one read of the cache row decides everything.
@@ -104,7 +134,10 @@ func Decide(ctx context.Context, db *sql.DB, now time.Time) (Status, bool, error
 		// summarize, so the stored value stays and no call is made.
 		cached.Stale = true
 		return cached.Status, false, nil
-	case found && newest == cached.sourceUpdatedAt:
+	case found && !newerContent(newest, cached.sourceUpdatedAt):
+		// The stored revision is the live one, or is newer than it because a post
+		// was deleted or archived. Either way the stored value still describes
+		// every published post, and there is nothing new to summarize.
 		cached.Stale = true
 		return cached.Status, false, nil
 	case found:
@@ -115,6 +148,25 @@ func Decide(ctx context.Context, db *sql.DB, now time.Time) (Status, bool, error
 	default:
 		return FallbackStatus(), true, nil
 	}
+}
+
+// newerContent reports whether the live published revision is strictly newer
+// than the one the stored value was generated from. Both are RFC3339 timestamps
+// written by the content path, so they are compared as instants rather than as
+// strings: deleting or archiving the newest post lowers MAX(updated_at), and a
+// lower revision means there is nothing new to summarize. A timestamp that does
+// not parse cannot prove freshness, so it asks for a refresh instead of pinning
+// the stored value forever.
+func newerContent(newest, stored string) bool {
+	newestAt, err := time.Parse(time.RFC3339, newest)
+	if err != nil {
+		return true
+	}
+	storedAt, err := time.Parse(time.RFC3339, stored)
+	if err != nil {
+		return true
+	}
+	return newestAt.After(storedAt)
 }
 
 // Refresh generates one new author status from the current published content and
@@ -139,12 +191,12 @@ func Refresh(ctx context.Context, db *sql.DB, cfg Config, logger *slog.Logger, n
 		{Role: "user", Content: statusPrompt(source)},
 	}, maxStatusTokens)
 	if err != nil {
-		recordFailure(ctx, db, logger, err)
+		recordFailure(ctx, db, logger, err, now)
 		return Status{}, err
 	}
 	generated, err := parseStatus(content)
 	if err != nil {
-		recordFailure(ctx, db, logger, err)
+		recordFailure(ctx, db, logger, err, now)
 		return Status{}, err
 	}
 	status, err := writeCache(ctx, db, generated, source.Newest, cfg.ttl(), now)
@@ -206,9 +258,10 @@ func (g *Guard) RefreshInBackground(db *sql.DB, cfg Config, logger *slog.Logger)
 	return true
 }
 
-// readCache reads and decodes the stored row. A row that no longer decodes is
-// reported as absent, so one broken value degrades to the fallback instead of
-// hiding the home page.
+// readCache reads and decodes the stored row. A row without a renderable value
+// is reported as found but unusable, so one broken value degrades to the
+// fallback instead of hiding the home page. Only the failure placeholder, which
+// has no generation timestamp either, also carries the retry deadline.
 func readCache(ctx context.Context, db *sql.DB) (stored, bool, error) {
 	var valueJSON, sourceUpdatedAt, generatedAt, expiresAt string
 	err := db.QueryRowContext(ctx,
@@ -220,16 +273,25 @@ func readCache(ctx context.Context, db *sql.DB) (stored, bool, error) {
 	if err != nil {
 		return stored{}, false, fmt.Errorf("ai: read author status cache: %w", err)
 	}
+	broken := stored{expiresAt: expiresAt}
+	// A row without a generation timestamp never carries generated content: that
+	// is the failure placeholder, and the handwritten fallback is recovered from
+	// it.
+	if generatedAt == "" {
+		broken.placeholder = true
+		return broken, true, nil
+	}
 	var value storedStatus
 	if err := json.Unmarshal([]byte(valueJSON), &value); err != nil {
-		return stored{}, false, nil
+		return broken, true, nil
 	}
 	text := strings.TrimSpace(value.Text)
 	if text == "" {
-		return stored{}, false, nil
+		return broken, true, nil
 	}
 	return stored{
 		Status:          Status{Text: text, Topics: boundList(value.Topics, maxStatusTopics, maxTopicRunes), GeneratedAt: generatedAt},
+		usable:          true,
 		sourceUpdatedAt: sourceUpdatedAt,
 		expiresAt:       expiresAt,
 	}, true, nil
@@ -259,26 +321,55 @@ func writeCache(ctx context.Context, db *sql.DB, value storedStatus, sourceUpdat
 	return Status{Text: value.Text, Topics: value.Topics, GeneratedAt: generatedAt}, nil
 }
 
-// recordFailure keeps the previous value and stores only the stable code, so an
-// operator can see why the status stopped updating without a prompt, a key or a
-// model reply landing in the database. A missing row is not created: the card
-// keeps rendering the fallback.
-func recordFailure(ctx context.Context, db *sql.DB, logger *slog.Logger, err error) {
+// recordFailure keeps whatever the card can render and stores only the stable
+// code, so an operator can see why the status stopped updating without a prompt,
+// a key or a model reply landing in the database. A stored value is never
+// touched: only its code changes. When nothing renderable is stored yet, a
+// minimal placeholder row carries the code and the retry deadline instead, so
+// the handwritten fallback keeps rendering while the next visit backs off
+// rather than calling the model again immediately.
+func recordFailure(ctx context.Context, db *sql.DB, logger *slog.Logger, err error, now time.Time) {
 	code := Code(err)
 	if code == "" {
 		code = CodeUpstream
 	}
-	if _, execErr := db.ExecContext(ctx,
-		`UPDATE ai_cache SET last_error = ? WHERE cache_key = ?`, code, StatusCacheKey); execErr != nil {
+	cached, found, readErr := readCache(ctx, db)
+	if readErr != nil {
+		logger.LogAttrs(ctx, slog.LevelWarn, "author status failure could not be recorded",
+			slog.String("error", readErr.Error()))
+		return
+	}
+	var execErr error
+	if found && cached.usable {
+		// The stored value is what visitors keep seeing: only the code is
+		// written, so a failed retry cannot overwrite the text, the source
+		// revision or the expiry it is served with.
+		_, execErr = db.ExecContext(ctx,
+			`UPDATE ai_cache SET last_error = ? WHERE cache_key = ?`, code, StatusCacheKey)
+	} else {
+		// value_json and generated_at stay empty, so the read side recognises the
+		// placeholder, renders the fallback and waits for the deadline.
+		_, execErr = db.ExecContext(ctx,
+			`INSERT INTO ai_cache(cache_key, value_json, source_updated_at, generated_at, expires_at, last_error)
+			 VALUES(?, '', '', '', ?, ?)
+			 ON CONFLICT(cache_key) DO UPDATE SET
+				value_json = excluded.value_json,
+				source_updated_at = excluded.source_updated_at,
+				generated_at = excluded.generated_at,
+				expires_at = excluded.expires_at,
+				last_error = excluded.last_error`,
+			StatusCacheKey, stamp(now.Add(failureBackoff)), code)
+	}
+	if execErr != nil {
 		logger.LogAttrs(ctx, slog.LevelWarn, "author status failure could not be recorded",
 			slog.String("error", execErr.Error()))
 	}
 }
 
 // newestPublished returns the most recently updated published post, or "" when
-// nothing is published. The comparison happens in SQL like the public feed's
-// cursor already does: every stored timestamp is RFC3339Nano UTC written by one
-// code path, so it is the same ordering the feed relies on.
+// nothing is published. Every timestamp is written by the content path in one
+// RFC3339 format, so MAX(updated_at) is the newest revision; Decide compares it
+// with the stored one as an instant rather than as a string.
 func newestPublished(ctx context.Context, db *sql.DB) (string, error) {
 	var newest string
 	err := db.QueryRowContext(ctx,

@@ -179,7 +179,8 @@ CREATE VIRTUAL TABLE post_search USING fts5(
 - 点赞、收藏使用 `INSERT ... ON CONFLICT DO NOTHING` 与 `DELETE`，响应返回最终状态和计数。收藏是私有的：返回的计数是当前用户自己的收藏总数。
 - 删除或拒绝父评论后，其回复仍是 `approved` 数据，但公开列表不会展示孤儿回复（写作时判定的可见性以父评论为准）。
 - FTS 索引由 posts 的 insert/update/delete 触发器同步；软删除内容不得进入搜索结果。
-- `ai_cache` 是生成结果的单行缓存：作者状态使用 `cache_key='author_status'`，`value_json` 形如 `{"text":"...","topics":["..."]}`（纯文本，最多 280 字与 5 个主题词）。`source_updated_at` 原样保存生成时最新已发布内容的 `updated_at`（与 `posts.updated_at` 做字符串比较，与公开信息流游标使用的是同一套存储格式），`expires_at` 由 `ai.author_status_ttl_hours` 计算；`last_error` 只保存稳定的失败短码（如 `timeout`、`upstream`、`invalid_reply`），**不保存提示词、密钥、模型输出或上游响应体**。刷新失败时不新增、不覆盖已有行，只更新 `last_error`；没有缓存行时前端渲染手写兑底文案，不为此写入一行。
+- `ai_cache` 是生成结果的单行缓存：作者状态使用 `cache_key='author_status'`，`value_json` 形如 `{"text":"...","topics":["..."]}`（纯文本，最多 280 字与 5 个主题词）。`source_updated_at` 原样保存生成时最新已发布内容的 `updated_at`，读取时与当前 `MAX(updated_at)` 按**时间**（RFC3339，同一套存储格式）比较：只有**严格更新**的已发布内容才值得刷新，删除或归档导致这个最大值回退时不调用模型；时间戳无法解析时不能证明内容没变，按“可能更新”保守刷新。`expires_at` 由 `ai.author_status_ttl_hours` 计算；`last_error` 只保存稳定的失败短码（如 `timeout`、`upstream`、`invalid_reply`），**不保存提示词、密钥、模型输出或上游响应体**。
+- 刷新失败分两种情况落库：已有可渲染值时只更新 `last_error`，**不覆盖 `value_json`、`source_updated_at`、`generated_at` 与 `expires_at`**；尚无任何可渲染值时才写入一行最小失败占位行（`value_json=''`、`generated_at=''`、`expires_at` 为失败时刻加固定的 5 分钟退避）。占位行只承载失败短码与“下次可重试时刻”：读取端据此渲染手写兑底文案（`default=true`、`generated_at` 为空），并在退避期内直接复用而不调用模型；仅仅值损坏但仍带 `generated_at` 的行不算占位行，有已发布内容时立即重新生成、不继承退避。
 - 迁移文件一经发布不可修改，只能追加新版本。
 
 ## 默认设置
