@@ -1,3 +1,6 @@
 /data/
 /boop
 /boop.exe
+/.env
+/.env.*
+!/.env.example
