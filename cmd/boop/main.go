@@ -14,6 +14,8 @@ import (
 
 	"boop/internal/config"
 	"boop/internal/server"
+	"boop/internal/settings"
+	"boop/internal/store"
 )
 
 func main() {
@@ -33,7 +35,23 @@ func run() error {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.SlogLevel()}))
 	slog.SetDefault(logger)
 
-	handler := server.New(cfg, nil)
+	db, err := store.Open(cfg.DatabasePath())
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := store.Migrate(db); err != nil {
+		return err
+	}
+	if err := settings.Seed(context.Background(), db); err != nil {
+		return err
+	}
+	logger.Info("database ready",
+		slog.String("path", cfg.DatabasePath()),
+		slog.Int("schema_version", store.LatestVersion()),
+	)
+
+	handler := server.New(cfg, db)
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,

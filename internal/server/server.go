@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"boop/internal/config"
+	"boop/internal/store"
 	"boop/web"
 )
 
@@ -72,6 +73,7 @@ func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleHome)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /readyz", s.handleReadyz)
 	mux.HandleFunc("GET /static/", s.handleStatic)
 	mux.HandleFunc("/", s.handleNotFound)
 
@@ -107,6 +109,20 @@ func (s *server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	if _, err := io.WriteString(w, "ok\n"); err != nil {
 		s.logger.LogAttrs(r.Context(), slog.LevelWarn, "healthz write failed", slog.String("error", err.Error()))
 	}
+}
+
+// handleReadyz reports whether SQLite answers and the schema is up to date.
+func (s *server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	if err := store.Ready(r.Context(), s.db); err != nil {
+		s.logger.LogAttrs(r.Context(), slog.LevelWarn, "readiness check failed", slog.String("error", err.Error()))
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, "unavailable\n")
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	io.WriteString(w, "ready\n")
 }
 
 // handleStatic serves the embedded assets with explicit content types so the

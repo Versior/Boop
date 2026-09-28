@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -129,6 +130,11 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 // MaxUploadBytes is the request body ceiling derived from BOOP_MAX_UPLOAD_MB.
 func (c Config) MaxUploadBytes() int64 {
 	return int64(c.MaxUploadMB) << 20
+}
+
+// DatabasePath is the SQLite file that lives inside BOOP_DATA_DIR.
+func (c Config) DatabasePath() string {
+	return filepath.Join(c.DataDir, "boop.db")
 }
 
 // SlogLevel maps the validated BOOP_LOG_LEVEL value to slog.

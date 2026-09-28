@@ -2,16 +2,20 @@ package server
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"boop/internal/config"
+	"boop/internal/store"
 )
 
 func testConfig() config.Config {
@@ -26,7 +30,12 @@ func testConfig() config.Config {
 
 func testServer(t *testing.T, logger *slog.Logger) *server {
 	t.Helper()
-	srv, err := newServer(testConfig(), nil, logger)
+	return testServerWithDB(t, logger, nil)
+}
+
+func testServerWithDB(t *testing.T, logger *slog.Logger, db *sql.DB) *server {
+	t.Helper()
+	srv, err := newServer(testConfig(), db, logger)
 	if err != nil {
 		t.Fatalf("newServer: %v", err)
 	}
@@ -293,10 +302,13 @@ func TestAccessLogWritesJSONAndSkipsHealthChecks(t *testing.T) {
 
 	do(t, handler, http.MethodGet, "/healthz", nil)
 	do(t, handler, http.MethodGet, "/readyz", nil)
-	if logs.Len() != 0 {
-		t.Errorf("health checks were logged: %s", logs.String())
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		if strings.Contains(line, `"msg":"request"`) {
+			t.Errorf("health checks produced an access log entry: %s", line)
+		}
 	}
 
+	logs.Reset()
 	do(t, handler, http.MethodGet, "/", nil)
 	line := strings.TrimSpace(logs.String())
 	if line == "" {
@@ -364,6 +376,52 @@ func TestBodyLimitAppliesToRequestBodies(t *testing.T) {
 	if readErr != nil {
 		t.Fatalf("small body failed: %v", readErr)
 	}
+}
+
+func TestReadyzReportsDatabaseState(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("unmigrated database", func(t *testing.T) {
+		db, err := store.Open(filepath.Join(t.TempDir(), "boop.db"))
+		if err != nil {
+			t.Fatalf("store.Open: %v", err)
+		}
+		defer db.Close()
+
+		rec := do(t, testServerWithDB(t, discardLogger(), db).handler(), http.MethodGet, "/readyz", nil)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503", rec.Code)
+		}
+	})
+
+	t.Run("migrated database", func(t *testing.T) {
+		db, err := store.Open(filepath.Join(t.TempDir(), "boop.db"))
+		if err != nil {
+			t.Fatalf("store.Open: %v", err)
+		}
+		defer db.Close()
+		if err := store.Migrate(db); err != nil {
+			t.Fatalf("store.Migrate: %v", err)
+		}
+		if err := store.Ready(ctx, db); err != nil {
+			t.Fatalf("store.Ready: %v", err)
+		}
+
+		rec := do(t, testServerWithDB(t, discardLogger(), db).handler(), http.MethodGet, "/readyz", nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		if got := rec.Body.String(); got != "ready\n" {
+			t.Errorf("body = %q, want ready", got)
+		}
+	})
+
+	t.Run("no database wired", func(t *testing.T) {
+		rec := do(t, testServer(t, discardLogger()).handler(), http.MethodGet, "/readyz", nil)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503", rec.Code)
+		}
+	})
 }
 
 func TestNewRegistersEmbeddedPages(t *testing.T) {

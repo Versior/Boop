@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -102,6 +103,24 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.SessionSecret != env["BOOP_SESSION_SECRET"] {
 		t.Error("SessionSecret was not preserved")
+	}
+}
+
+func TestDatabasePath(t *testing.T) {
+	cfg, err := load(envFrom(map[string]string{"BOOP_DATA_DIR": filepath.Join("G:", "srv", "boop")}))
+	if err != nil {
+		t.Fatalf("load(): %v", err)
+	}
+	if want := filepath.Join("G:", "srv", "boop", "boop.db"); cfg.DatabasePath() != want {
+		t.Errorf("DatabasePath() = %q, want %q", cfg.DatabasePath(), want)
+	}
+
+	defaults, err := load(envFrom(nil))
+	if err != nil {
+		t.Fatalf("load(): %v", err)
+	}
+	if want := filepath.Join(".", "data", "boop.db"); defaults.DatabasePath() != want {
+		t.Errorf("DatabasePath() = %q, want %q", defaults.DatabasePath(), want)
 	}
 }
 
