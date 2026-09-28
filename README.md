@@ -9,10 +9,6 @@
 </p>
 
 <p align="center">
-  X/Twitter 原生感界面 · Go 单体服务 · SQLite · 为 1 核 500MB 小服务器而生
-</p>
-
-<p align="center">
   <a href="https://github.com/Versior/Boop/stargazers"><img alt="GitHub Stars" src="https://img.shields.io/github/stars/Versior/Boop?style=flat-square&color=0f1419"></a>
   <a href="https://github.com/Versior/Boop/commits/main"><img alt="Last Commit" src="https://img.shields.io/github/last-commit/Versior/Boop?style=flat-square&color=1d9bf0"></a>
   <img alt="Go" src="https://img.shields.io/badge/Go-1.27-00ADD8?style=flat-square&logo=go&logoColor=white">
@@ -36,7 +32,7 @@
 | :---: | :---: | :---: |
 | Go 单体 + SQLite，无 Node 构建、Redis、ORM 和消息队列 | 文章、动态、摄影统一成一条有辨识度的个人时间线 | 访问触发作者状态总结，并提供摘要、标签和 SEO 建议 |
 
-Boop 不是社交平台复刻。它只借鉴 X/Twitter 清晰、紧凑的信息层级，把发布权交给站长，同时保留读者注册、评论、回复、点赞与收藏。
+Boop 只有站长发布内容，信息层级清晰、紧凑；读者可以注册、评论、回复、点赞与收藏。
 
 ## 🧩 功能
 
@@ -45,7 +41,7 @@ Boop 不是社交平台复刻。它只借鉴 X/Twitter 清晰、紧凑的信息�
 - **身份认证** — 邮箱密码、GitHub OAuth、后台注册开关
 - **AI 能力** — 作者状态总结、文章摘要、标签与 SEO 建议；建议不会自动覆盖草稿
 - **媒体管理** — 本地图片上传、真实类型检测、大小限制与内容去重
-- **内容发现** — SQLite FTS5 全文搜索、X 风格结果页、RSS 2.0
+- **内容发现** — SQLite FTS5 全文搜索、结果页高亮与游标分页、RSS 2.0
 - **站点体验** — 浅色/深色主题、响应式三栏布局、后台集中配置
 - **安全基础** — CSRF、防开放重定向、加密保存第三方密钥、安全 Cookie 配置
 
