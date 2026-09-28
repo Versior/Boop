@@ -97,7 +97,10 @@ func (s *server) handler() http.Handler {
 	var handler http.Handler = mux
 	handler = s.guardUnsafeMethods(handler)
 	handler = s.authenticate(handler)
-	handler = limitBody(handler, s.cfg.MaxUploadBytes())
+	// The body ceiling is the single-file cap plus the multipart framing budget;
+	// each handler still narrows its own body (readJSON) or the file itself
+	// (readUpload, media.Store).
+	handler = limitBody(handler, s.cfg.MaxUploadBytes()+multipartBodyOverhead)
 	handler = recoverPanic(handler, s.logger)
 	handler = accessLog(handler, s.logger)
 	handler = securityHeaders(handler)

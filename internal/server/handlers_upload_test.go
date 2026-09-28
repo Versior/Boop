@@ -69,6 +69,20 @@ type uploadPart struct {
 	content  string
 }
 
+// paddedPNG returns a real PNG whose byte length is exactly size. Boop only
+// reads the image header (sniff + dimensions), so trailing padding makes the
+// length exact without encoding a megabyte of pixels in every test.
+func paddedPNG(t *testing.T, size int) []byte {
+	t.Helper()
+	base := pngFixture(t, 8, 8, 3)
+	if size < len(base) {
+		t.Fatalf("paddedPNG(%d) is smaller than the base PNG", size)
+	}
+	padded := make([]byte, size)
+	copy(padded, base)
+	return padded
+}
+
 // uploadPNG uploads one image as the signed-in owner and returns the asset data.
 func (c *contentFixture) uploadPNG(t *testing.T, filename string, data []byte) map[string]any {
 	t.Helper()
@@ -366,6 +380,90 @@ func TestUploadRejectsBadMultipartShape(t *testing.T) {
 	})
 }
 
+// The documented ceiling is a single-file ceiling: multipart framing must not
+// push a file of exactly BOOP_MAX_UPLOAD_MB over the limit, while the request
+// body still has a bounded total cap.
+func TestUploadSizeBoundaries(t *testing.T) {
+	const mebibyte = 1 << 20
+
+	newFixture := func(t *testing.T) (*contentFixture, *http.Cookie, string) {
+		t.Helper()
+		cfg := testConfig()
+		cfg.MaxUploadMB = 1
+		cfg.DataDir = t.TempDir()
+		f := newAuthFixtureWithConfig(t, cfg)
+		f.bootstrapOwner(t, "owner@example.com", "遇事开心")
+		rec := f.login(t, "owner@example.com", authPassword, nil)
+		return &contentFixture{authFixture: f}, sessionCookie(t, rec), decodeData(t, rec)["csrf_token"].(string)
+	}
+
+	t.Run("a file of exactly the limit is accepted", func(t *testing.T) {
+		c, cookie, csrf := newFixture(t)
+		body, contentType := uploadBody(t, []uploadPart{{field: "file", filename: "exact.png", content: string(paddedPNG(t, mebibyte))}})
+		rec := c.uploadPOSTFor(t, body, contentType, cookie, csrf, testOrigin)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201 for a file of exactly the limit: %s", rec.Code, rec.Body.String())
+		}
+		asset := decodeData(t, rec)
+		if size, _ := asset["size_bytes"].(float64); int64(size) != mebibyte {
+			t.Errorf("size_bytes = %v, want %d", asset["size_bytes"], mebibyte)
+		}
+		files := c.storedFiles(t)
+		if len(files) != 1 {
+			t.Fatalf("files = %v, want one stored file", files)
+		}
+		info, err := os.Stat(files[0])
+		if err != nil {
+			t.Fatalf("stat stored file: %v", err)
+		}
+		if info.Size() != mebibyte {
+			t.Errorf("stored file = %d bytes, want %d", info.Size(), mebibyte)
+		}
+	})
+
+	t.Run("one byte over the limit is rejected", func(t *testing.T) {
+		c, cookie, csrf := newFixture(t)
+		body, contentType := uploadBody(t, []uploadPart{{field: "file", filename: "over.png", content: string(paddedPNG(t, mebibyte+1))}})
+		rec := c.uploadPOSTFor(t, body, contentType, cookie, csrf, testOrigin)
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("status = %d, want 413: %s", rec.Code, rec.Body.String())
+		}
+		if code, _, _ := decodeAPIError(t, rec); code != "payload_too_large" {
+			t.Errorf("code = %q, want payload_too_large", code)
+		}
+		assertNoUploadRuins(t, c)
+	})
+
+	t.Run("the framing budget is bounded", func(t *testing.T) {
+		c, cookie, csrf := newFixture(t)
+		// A legal file plus an oversized extra field must still hit a total cap.
+		body, contentType := uploadBody(t, []uploadPart{
+			{field: "file", filename: "exact.png", content: string(paddedPNG(t, mebibyte))},
+			{field: "padding", content: strings.Repeat("y", int(multipartBodyOverhead)+1<<10)},
+		})
+		rec := c.uploadPOSTFor(t, body, contentType, cookie, csrf, testOrigin)
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("status = %d, want 413 for a body past the framing budget: %s", rec.Code, rec.Body.String())
+		}
+		if code, _, _ := decodeAPIError(t, rec); code != "payload_too_large" {
+			t.Errorf("code = %q, want payload_too_large", code)
+		}
+		assertNoUploadRuins(t, c)
+	})
+}
+
+// assertNoUploadRuins checks that a rejected upload stored neither a row nor a
+// file under the upload root.
+func assertNoUploadRuins(t *testing.T, c *contentFixture) {
+	t.Helper()
+	if files := c.storedFiles(t); len(files) != 0 {
+		t.Errorf("files = %v, want none", files)
+	}
+	if assets := c.countRows(t, "assets"); assets != 0 {
+		t.Errorf("assets = %d, want none", assets)
+	}
+}
+
 func TestUploadRejectsOversizedRequest(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxUploadMB = 1
@@ -376,7 +474,8 @@ func TestUploadRejectsOversizedRequest(t *testing.T) {
 	cookie := sessionCookie(t, rec)
 	csrf := decodeData(t, rec)["csrf_token"].(string)
 
-	// One mebibyte of PNG plus multipart framing exceeds the one mebibyte budget.
+	// One mebibyte of PNG plus multipart framing exceeds the one mebibyte file
+	// budget.
 	big := append(pngFixture(t, 8, 8, 11), bytes.Repeat([]byte{0}, 1<<20)...)
 	body, contentType := uploadBody(t, []uploadPart{{field: "file", filename: "big.png", content: string(big)}})
 	up := f.uploadPOSTFor(t, body, contentType, cookie, csrf, testOrigin)
@@ -398,6 +497,42 @@ func TestUploadRejectsOversizedRequest(t *testing.T) {
 	if assets != 0 {
 		t.Errorf("assets = %d, want none", assets)
 	}
+}
+
+// The API documents exactly one file field named "file": a file part under any
+// other name is a contract violation, while plain form fields stay ignored.
+func TestUploadRequiresTheFileFieldName(t *testing.T) {
+	c := newContentFixture(t)
+	data := pngFixture(t, 6, 6, 61)
+
+	t.Run("wrong file field name", func(t *testing.T) {
+		body, contentType := uploadBody(t, []uploadPart{{field: "image", filename: "sea.png", content: string(data)}})
+		rec := c.uploadPOSTFor(t, body, contentType, c.cookie, c.csrf, testOrigin)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
+		}
+		code, _, _ := decodeAPIError(t, rec)
+		if code != "invalid_body" {
+			t.Errorf("code = %q, want invalid_body", code)
+		}
+		if assets := c.countRows(t, "assets"); assets != 0 {
+			t.Errorf("assets = %d, want none for a misnamed field", assets)
+		}
+		if files := c.storedFiles(t); len(files) != 0 {
+			t.Errorf("files = %v, want none for a misnamed field", files)
+		}
+	})
+
+	t.Run("extra non-file fields stay ignored", func(t *testing.T) {
+		body, contentType := uploadBody(t, []uploadPart{
+			{field: "file", filename: "sea.png", content: string(data)},
+			{field: "caption", content: "雾里的海岸线"},
+		})
+		rec := c.uploadPOSTFor(t, body, contentType, c.cookie, c.csrf, testOrigin)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201: %s", rec.Code, rec.Body.String())
+		}
+	})
 }
 
 func TestUploadReusesIdenticalBytes(t *testing.T) {

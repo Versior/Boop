@@ -109,8 +109,18 @@ func recoverPanic(next http.Handler, logger *slog.Logger) http.Handler {
 	})
 }
 
-// limitBody caps every request body at the configured upload ceiling. Handlers
-// that read a body surface the *http.MaxBytesError as a 413 response.
+// multipartBodyOverhead is the fixed, bounded budget added on top of the
+// single-file ceiling to cover multipart framing: boundaries, part headers and
+// small non-file fields. Without it a file of exactly BOOP_MAX_UPLOAD_MB could
+// never be uploaded, because its framing pushes the request body past the cap.
+// The file itself is still limited to cfg.MaxUploadBytes() by readUpload and
+// media.Store, and JSON handlers keep their own 64KiB / 512KiB ceilings.
+const multipartBodyOverhead = 64 << 10
+
+// limitBody caps every request body at the configured upload ceiling plus the
+// multipart framing budget. Handlers that read a body surface the
+// *http.MaxBytesError as a 413 response, and narrower per-handler limits (auth
+// and content JSON) still apply inside it.
 func limitBody(next http.Handler, maxBytes int64) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil {

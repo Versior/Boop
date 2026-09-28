@@ -95,8 +95,13 @@ func (s *server) readUpload(w http.ResponseWriter, r *http.Request, limit int64)
 			return "", nil, false
 		}
 		if part.FileName() == "" {
-			// A plain form field: the contract is exactly one file and no fields.
+			// A plain form field: the contract is exactly one file named
+			// uploadFieldName, extra fields are ignored.
 			continue
+		}
+		if part.FormName() != uploadFieldName {
+			writeFailure(w, r, http.StatusBadRequest, "invalid_body", "文件字段名必须是 "+uploadFieldName)
+			return "", nil, false
 		}
 		if filename != "" {
 			writeFailure(w, r, http.StatusBadRequest, "invalid_body", "一次只能上传一个文件")

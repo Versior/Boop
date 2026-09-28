@@ -134,6 +134,9 @@
     var asset = null;
     var uploading = false;
     var previewURL = '';
+    /* 每次选择新文件都会递增：只有最新一次上传可以写 asset、提示、错误和
+       uploading，旧请求返回时就无效了，不会覆盖新图片。 */
+    var uploadGeneration = 0;
 
     function currentMode(buttons) {
       for (var i = 0; i < buttons.length; i++) {
@@ -200,6 +203,7 @@
 
     /* 上传失败时把服务端的中文错误直接展示给用户，不猜测原因。 */
     function uploadImage(file) {
+      var generation = ++uploadGeneration;
       var body = new FormData();
       body.append('file', file, file.name);
 
@@ -224,17 +228,20 @@
           return result.data;
         });
       }).then(function (data) {
+        if (generation !== uploadGeneration) { return; }
         asset = data;
         setHint(data.reused
           ? '这张图片之前已经上传过，将直接复用（' + data.mime_type + '）。'
           : '已上传：' + data.mime_type + ' · ' + Math.round(data.size_bytes / 1024) + ' KB');
       }).catch(function (error) {
+        if (generation !== uploadGeneration) { return; }
         asset = null;
         clearPreview();
         if (fileInput) { fileInput.value = ''; }
         setHint(FILE_HINT);
         showError(error.message || '上传失败，请稍后重试。');
       }).then(function () {
+        if (generation !== uploadGeneration) { return; }
         uploading = false;
         sync();
       });
@@ -289,9 +296,12 @@
       fileInput.addEventListener('change', function () {
         clearError();
         open();
+        /* 新一次选择让进行中的旧上传立即失效，并先丢掉旧图片。 */
+        uploadGeneration++;
+        asset = null;
+        uploading = false;
         var chosen = fileInput.files && fileInput.files[0];
         if (!chosen) {
-          asset = null;
           clearPreview();
           setHint(FILE_HINT);
           sync();

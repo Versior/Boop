@@ -55,7 +55,9 @@
 
 上传与图片服务：
 
-- 文件类型由字节推断（`http.DetectContentType`），不信任客户端 MIME：扩展名与内容不符返回 400 `invalid_filename`，内容不是 jpg/png/webp/gif 返回 415 `unsupported_media_type`，请求体或文件超过 `BOOP_MAX_UPLOAD_MB`（含 multipart 封装开销）返回 413 `payload_too_large`，缺少文件、多个文件或非 multipart 请求返回 400 `invalid_body`。
+- 文件类型由字节推断（`http.DetectContentType`），不信任客户端 MIME：扩展名与内容不符返回 400 `invalid_filename`，内容不是 jpg/png/webp/gif 返回 415 `unsupported_media_type`。
+- `BOOP_MAX_UPLOAD_MB`（默认 10MB）是**单文件上限**：文件本身超过该上限返回 413 `payload_too_large`，恰好等于上限的文件可以上传。请求体总上限是该上限加上固定的 multipart 封装预算（64KiB，用于 boundary 与分段头），请求体超出同样返回 413 `payload_too_large`。
+- 必须恰好一个文件字段，字段名必须是 `file`，否则返回 400 `invalid_body`；其它非文件表单字段会被忽略。缺少文件、多个文件或非 multipart 请求同样返回 400 `invalid_body`。
 - 新文件返回 201；相同字节且属于同一站长时返回 200 且 `reused=true`，复用既有 asset 与文件。响应字段：`id`、`url`、`storage_key`、`mime_type`、`size_bytes`、`width`、`height`、`original_name`、`reused`。
 - 客户端文件名只作为 `original_name` 元数据保存，绝不进入路径；`storage_key` 由服务端生成为 `YYYY/MM/<32 位随机十六进制>.<ext>`。
 - `asset_ids` 必须是当前站长上传过的图片资源：不存在、不属于自己或不是图片 MIME 均返回 400 `invalid_asset`；发布 `photo` 至少需要一张这样的图片，否则返回 400 `invalid_assets`。
