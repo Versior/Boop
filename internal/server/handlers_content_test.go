@@ -779,7 +779,7 @@ func TestMomentPageEscapesMarkup(t *testing.T) {
 // ---------- quick publisher ----------
 
 func TestComposerIsRenderedOnlyForTheOwner(t *testing.T) {
-	markers := []string{`id="composer"`, `data-composer-form`, `data-mode="moment"`, `data-mode="article"`, `data-mode="photo"`, `data-composer-submit`, "快捷发布"}
+	markers := []string{`id="composer"`, `data-composer-form`, `data-mode="moment"`, `data-mode="article"`, `data-mode="photo"`, `data-composer-submit`, `data-composer-file`, "快捷发布"}
 
 	t.Run("guest", func(t *testing.T) {
 		f := newAuthFixture(t)
@@ -810,7 +810,7 @@ func TestComposerIsRenderedOnlyForTheOwner(t *testing.T) {
 				t.Errorf("owner DOM is missing %q", marker)
 			}
 		}
-		for _, field := range []string{`data-composer-text`, `data-composer-title`, `data-composer-tags`, `data-composer-excerpt`, `data-composer-error`, `data-composer-count`, `data-composer-drop`} {
+		for _, field := range []string{`data-composer-text`, `data-composer-title`, `data-composer-tags`, `data-composer-excerpt`, `data-composer-error`, `data-composer-count`, `data-composer-drop`, `data-composer-file`, `data-composer-file-hint`, `data-composer-preview`} {
 			if !strings.Contains(body, field) {
 				t.Errorf("owner composer is missing %q", field)
 			}
@@ -818,8 +818,11 @@ func TestComposerIsRenderedOnlyForTheOwner(t *testing.T) {
 		if !strings.Contains(body, `action="/api/v1/admin/posts"`) {
 			t.Errorf("composer does not post to the publishing endpoint")
 		}
-		if !strings.Contains(body, "图片上传") {
-			t.Errorf("photo mode gives no honest hint about Task 5 uploads")
+		// 摄影模式必须有真实的文件选择与预览，而不是一句占位说明。
+		for _, marker := range []string{`type="file"`, `accept="image/jpeg,image/png,image/webp,image/gif"`} {
+			if !strings.Contains(body, marker) {
+				t.Errorf("photo mode is missing %q", marker)
+			}
 		}
 	})
 }

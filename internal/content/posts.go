@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"boop/internal/media"
 	"boop/internal/store"
 )
 
@@ -19,12 +21,16 @@ const postColumns = `p.id, p.slug, p.type, p.status, p.title, p.body_markdown, p
 	(SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id),
 	(SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id AND c.status = 'approved' AND c.deleted_at IS NULL)`
 
-// Create stores a new post: slug allocation, the row itself, its asset links and
-// its tags all happen in one transaction, so a rejected relationship write
-// leaves nothing behind.
-func Create(ctx context.Context, db *sql.DB, in Input, now time.Time) (*Post, error) {
+// Create stores a new post owned by ownerID: slug allocation, the row itself,
+// its asset links and its tags all happen in one transaction, so a rejected
+// relationship write leaves nothing behind. ownerID is required because a
+// referenced asset must belong to the writer and be an image.
+func Create(ctx context.Context, db *sql.DB, ownerID int64, in Input, now time.Time) (*Post, error) {
 	if db == nil {
 		return nil, errors.New("content: create: nil database")
+	}
+	if ownerID <= 0 {
+		return nil, errors.New("content: create: owner id is required")
 	}
 	prepared, err := validateInput(in)
 	if err != nil {
@@ -42,7 +48,7 @@ func Create(ctx context.Context, db *sql.DB, in Input, now time.Time) (*Post, er
 	}
 	defer tx.Rollback()
 
-	if err := checkAssetsExist(ctx, tx, prepared.AssetIDs); err != nil {
+	if err := checkAssets(ctx, tx, ownerID, prepared.AssetIDs); err != nil {
 		return nil, err
 	}
 
@@ -82,9 +88,12 @@ func Create(ctx context.Context, db *sql.DB, in Input, now time.Time) (*Post, er
 
 // Update applies a partial change under an optimistic lock: the caller must send
 // the updated_at it read, and a row that moved on is reported as a conflict.
-func Update(ctx context.Context, db *sql.DB, id int64, patch Patch, now time.Time) (*Post, error) {
+func Update(ctx context.Context, db *sql.DB, ownerID int64, id int64, patch Patch, now time.Time) (*Post, error) {
 	if db == nil {
 		return nil, errors.New("content: update: nil database")
+	}
+	if ownerID <= 0 {
+		return nil, errors.New("content: update: owner id is required")
 	}
 	if _, err := time.Parse(TimestampFormat, patch.UpdatedAt); err != nil {
 		return nil, invalid("invalid_updated_at", "缺少或错误的 updated_at")
@@ -148,7 +157,7 @@ func Update(ctx context.Context, db *sql.DB, id int64, patch Patch, now time.Tim
 	}
 	defer tx.Rollback()
 
-	if err := checkAssetsExist(ctx, tx, prepared.AssetIDs); err != nil {
+	if err := checkAssets(ctx, tx, ownerID, prepared.AssetIDs); err != nil {
 		return nil, err
 	}
 
@@ -230,14 +239,50 @@ func ByID(ctx context.Context, db *sql.DB, id int64) (*Post, error) {
 	return post, nil
 }
 
-func checkAssetsExist(ctx context.Context, tx *sql.Tx, ids []int64) error {
-	for _, id := range ids {
-		var exists int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM assets WHERE id = ?`, id).Scan(&exists); err != nil {
-			return fmt.Errorf("content: check asset %d: %w", id, err)
+// checkAssets verifies every referenced asset in one statement: each id must
+// exist, belong to ownerID and be an image this deployment produced. Looking at
+// the id alone would let a post reference an asset the writer does not own.
+func checkAssets(ctx context.Context, tx *sql.Tx, ownerID int64, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, ownerID)
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id, mime_type FROM assets WHERE owner_user_id = ? AND id IN (`+strings.Join(placeholders, ",")+`)`,
+		args...)
+	if err != nil {
+		return fmt.Errorf("content: check assets: %w", err)
+	}
+	defer rows.Close()
+
+	found := make(map[int64]string, len(ids))
+	for rows.Next() {
+		var id int64
+		var mime string
+		if err := rows.Scan(&id, &mime); err != nil {
+			return fmt.Errorf("content: scan asset: %w", err)
 		}
-		if exists == 0 {
+		found[id] = mime
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("content: asset rows: %w", err)
+	}
+
+	for _, id := range ids {
+		mime, ok := found[id]
+		if !ok {
+			// Unknown and not-yours are the same answer on purpose: a writer must
+			// not be able to probe for other people's assets.
 			return invalid("invalid_asset", "关联的图片不存在")
+		}
+		if !media.IsImageMIME(mime) {
+			return invalid("invalid_asset", "只能关联图片资源")
 		}
 	}
 	return nil

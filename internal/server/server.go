@@ -89,6 +89,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/logout", s.handleLogoutAPI)
 	mux.HandleFunc("GET /api/v1/auth/me", s.handleMeAPI)
 	mux.HandleFunc("/api/v1/auth/", s.handleAuthFallback)
+	mux.HandleFunc("POST /api/v1/admin/uploads", s.handleUploadAPI)
+	mux.HandleFunc("GET /uploads/{key...}", s.handleUploads)
 	mux.HandleFunc("GET /static/", s.handleStatic)
 	mux.HandleFunc("/", s.handleNotFound)
 

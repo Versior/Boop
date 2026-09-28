@@ -122,10 +122,18 @@
     var submit = composer.querySelector('[data-composer-submit]');
     var errorBox = composer.querySelector('[data-composer-error]');
     var modes = Array.prototype.slice.call(composer.querySelectorAll('[data-mode]'));
+    var fileInput = composer.querySelector('[data-composer-file]');
+    var fileHint = composer.querySelector('[data-composer-file-hint]');
+    var preview = composer.querySelector('[data-composer-preview]');
 
     var mode = currentMode(modes);
     /* 动态上限来自 docs/PRODUCT.md（2,000 字），文章与摄影没有单独字数上限。 */
     var MOMENT_MAX = 2000;
+    var FILE_HINT = fileHint ? fileHint.textContent : '';
+    /* 摄影模式先上传图片拿到 asset id，再用它创建 photo 内容。 */
+    var asset = null;
+    var uploading = false;
+    var previewURL = '';
 
     function currentMode(buttons) {
       for (var i = 0; i < buttons.length; i++) {
@@ -135,6 +143,7 @@
     }
 
     function hasContent() {
+      if (mode === 'photo') { return !!asset; }
       if (text.value.trim()) { return true; }
       /* 文章只有标题也算写了内容，与 V7 的原型行为一致。 */
       return mode === 'article' && !!title.value.trim();
@@ -146,7 +155,7 @@
       } else {
         count.textContent = String(text.value.length);
       }
-      submit.disabled = !hasContent();
+      submit.disabled = uploading || !hasContent();
     }
 
     function grow() {
@@ -164,6 +173,71 @@
       if (!errorBox) { return; }
       errorBox.textContent = '';
       errorBox.hidden = true;
+    }
+
+    function setHint(message) {
+      if (fileHint) { fileHint.textContent = message; }
+    }
+
+    function clearPreview() {
+      if (previewURL) {
+        URL.revokeObjectURL(previewURL);
+        previewURL = '';
+      }
+      if (preview) {
+        preview.hidden = true;
+        preview.removeAttribute('src');
+      }
+    }
+
+    function showPreview(file) {
+      if (!preview || !window.URL || !URL.createObjectURL) { return; }
+      clearPreview();
+      previewURL = URL.createObjectURL(file);
+      preview.src = previewURL;
+      preview.hidden = false;
+    }
+
+    /* 上传失败时把服务端的中文错误直接展示给用户，不猜测原因。 */
+    function uploadImage(file) {
+      var body = new FormData();
+      body.append('file', file, file.name);
+
+      var headers = {};
+      var token = csrfToken();
+      if (token) { headers['X-CSRF-Token'] = token; }
+
+      uploading = true;
+      sync();
+      setHint('上传中…');
+
+      return fetch('/api/v1/admin/uploads', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: headers,
+        body: body
+      }).then(function (response) {
+        return response.json().catch(function () { return null; }).then(function (result) {
+          if (!response.ok) {
+            throw new Error(errorText(result, '上传失败（' + response.status + '）'));
+          }
+          return result.data;
+        });
+      }).then(function (data) {
+        asset = data;
+        setHint(data.reused
+          ? '这张图片之前已经上传过，将直接复用（' + data.mime_type + '）。'
+          : '已上传：' + data.mime_type + ' · ' + Math.round(data.size_bytes / 1024) + ' KB');
+      }).catch(function (error) {
+        asset = null;
+        clearPreview();
+        if (fileInput) { fileInput.value = ''; }
+        setHint(FILE_HINT);
+        showError(error.message || '上传失败，请稍后重试。');
+      }).then(function () {
+        uploading = false;
+        sync();
+      });
     }
 
     function applyMode(next) {
@@ -196,8 +270,7 @@
       if (tags && tags.value.trim()) {
         body.tags = tags.value.split(',').map(function (item) { return item.trim(); }).filter(function (item) { return item; });
       }
-      /* Task 5 之前没有上传接口，摄影模式没有资源可关联。 */
-      if (mode === 'photo') { body.asset_ids = []; }
+      if (mode === 'photo' && asset) { body.asset_ids = [asset.id]; }
       return body;
     }
 
@@ -212,10 +285,31 @@
       text.addEventListener('input', function () { open(); grow(); sync(); });
     }
     if (title) { title.addEventListener('input', function () { open(); sync(); }); }
+    if (fileInput) {
+      fileInput.addEventListener('change', function () {
+        clearError();
+        open();
+        var chosen = fileInput.files && fileInput.files[0];
+        if (!chosen) {
+          asset = null;
+          clearPreview();
+          setHint(FILE_HINT);
+          sync();
+          return;
+        }
+        showPreview(chosen);
+        uploadImage(chosen);
+      });
+    }
 
     form.addEventListener('submit', function (event) {
       event.preventDefault();
       clearError();
+      if (mode === 'photo' && !asset) {
+        showError('请先选择一张图片再发布摄影内容。');
+        sync();
+        return;
+      }
       submit.disabled = true;
 
       var headers = { 'Content-Type': 'application/json' };
@@ -239,6 +333,10 @@
         if (title) { title.value = ''; }
         if (tags) { tags.value = ''; }
         if (excerpt) { excerpt.value = ''; }
+        if (fileInput) { fileInput.value = ''; }
+        asset = null;
+        clearPreview();
+        setHint(FILE_HINT);
         showToast('已发布');
         /* 重新加载首页，让服务端渲染的新卡片出现（不在 JS 里重复模板）。 */
         window.setTimeout(function () { window.location.reload(); }, 900);

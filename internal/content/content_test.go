@@ -2,6 +2,7 @@ package content
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"database/sql/driver"
 	"errors"
@@ -127,13 +128,16 @@ func insertUserWithID(t *testing.T, db *sql.DB, id int64, email, role, name, sta
 	}
 }
 
-// insertAsset creates the asset row a photo post needs; uploads arrive in Task 5.
+// insertAsset creates the asset row a photo post needs: one owner-visible image
+// with a content hash of its own key, so several fixtures stay unique under
+// idx_assets_owner_hash. Uploads themselves arrive in Task 5.
 func (f *testFixture) insertAsset(t *testing.T, key string) int64 {
 	t.Helper()
+	digest := sha256.Sum256([]byte(key))
 	res, err := f.db.Exec(
 		`INSERT INTO assets(owner_user_id, storage_key, original_name, mime_type, size_bytes, sha256, created_at)
 		 VALUES(?,?,?,?,?,?,?)`,
-		f.ownerID, key, key+".jpg", "image/jpeg", 1024, []byte("sha"), testNow.Format(time.RFC3339))
+		f.ownerID, key, key+".jpg", "image/jpeg", 1024, digest[:], testNow.Format(time.RFC3339))
 	if err != nil {
 		t.Fatalf("insert asset: %v", err)
 	}
@@ -234,7 +238,7 @@ func TestSlugifyTruncatesOnRuneBoundary(t *testing.T) {
 func TestSlugIsURLSafeShape(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	post, err := Create(ctx, f.db, Input{Type: TypeArticle, Status: StatusPublished, Title: "Hello, World! 你好", Body: "正文"}, testNow)
+	post, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeArticle, Status: StatusPublished, Title: "Hello, World! 你好", Body: "正文"}, testNow)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -263,7 +267,7 @@ func TestValidateMomentBody(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			post, err := Create(ctx, f.db, Input{Type: TypeMoment, Status: tc.status, Body: tc.body}, testNow)
+			post, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeMoment, Status: tc.status, Body: tc.body}, testNow)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("Create: %v", err)
@@ -297,7 +301,7 @@ func TestValidateArticleTitleAndBody(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Create(ctx, f.db, tc.in, testNow)
+			_, err := Create(ctx, f.db, f.ownerID, tc.in, testNow)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("Create: %v", err)
@@ -315,11 +319,11 @@ func TestPhotoPublishRequiresAnExistingAsset(t *testing.T) {
 	assetID := f.insertAsset(t, "photos/one.jpg")
 
 	t.Run("moment without a title", func(t *testing.T) {
-		_, err := Create(ctx, f.db, Input{Type: TypeMoment, Status: StatusPublished, Title: "标题", Body: "正文"}, testNow)
+		_, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeMoment, Status: StatusPublished, Title: "标题", Body: "正文"}, testNow)
 		assertValidation(t, err, "invalid_title")
 	})
 	t.Run("moment with a photo", func(t *testing.T) {
-		post, err := Create(ctx, f.db, Input{
+		post, err := Create(ctx, f.db, f.ownerID, Input{
 			Type: TypeMoment, Status: StatusPublished, Body: "带图的动态", AssetIDs: []int64{assetID},
 		}, testNow)
 		if err != nil {
@@ -330,27 +334,27 @@ func TestPhotoPublishRequiresAnExistingAsset(t *testing.T) {
 		}
 	})
 	t.Run("article with a cover", func(t *testing.T) {
-		if _, err := Create(ctx, f.db, Input{
+		if _, err := Create(ctx, f.db, f.ownerID, Input{
 			Type: TypeArticle, Status: StatusPublished, Title: "封面文章", Body: "正文", AssetIDs: []int64{assetID},
 		}, testNow); err != nil {
 			t.Fatalf("articles may carry a cover: %v", err)
 		}
 	})
 	t.Run("photo without assets published", func(t *testing.T) {
-		_, err := Create(ctx, f.db, Input{Type: TypePhoto, Status: StatusPublished, Body: "雾"}, testNow)
+		_, err := Create(ctx, f.db, f.ownerID, Input{Type: TypePhoto, Status: StatusPublished, Body: "雾"}, testNow)
 		assertValidation(t, err, "invalid_assets")
 	})
 	t.Run("photo draft without assets", func(t *testing.T) {
-		if _, err := Create(ctx, f.db, Input{Type: TypePhoto, Status: StatusDraft}, testNow); err != nil {
+		if _, err := Create(ctx, f.db, f.ownerID, Input{Type: TypePhoto, Status: StatusDraft}, testNow); err != nil {
 			t.Fatalf("draft photo without assets: %v", err)
 		}
 	})
 	t.Run("photo with an unknown asset", func(t *testing.T) {
-		_, err := Create(ctx, f.db, Input{Type: TypePhoto, Status: StatusPublished, AssetIDs: []int64{9999}}, testNow)
+		_, err := Create(ctx, f.db, f.ownerID, Input{Type: TypePhoto, Status: StatusPublished, AssetIDs: []int64{9999}}, testNow)
 		assertValidation(t, err, "invalid_asset")
 	})
 	t.Run("photo with a known asset", func(t *testing.T) {
-		post, err := Create(ctx, f.db, Input{Type: TypePhoto, Status: StatusPublished, AssetIDs: []int64{assetID}}, testNow)
+		post, err := Create(ctx, f.db, f.ownerID, Input{Type: TypePhoto, Status: StatusPublished, AssetIDs: []int64{assetID}}, testNow)
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -359,7 +363,7 @@ func TestPhotoPublishRequiresAnExistingAsset(t *testing.T) {
 		}
 	})
 	t.Run("duplicate asset ids", func(t *testing.T) {
-		_, err := Create(ctx, f.db, Input{Type: TypePhoto, Status: StatusPublished, AssetIDs: []int64{assetID, assetID}}, testNow)
+		_, err := Create(ctx, f.db, f.ownerID, Input{Type: TypePhoto, Status: StatusPublished, AssetIDs: []int64{assetID, assetID}}, testNow)
 		assertValidation(t, err, "invalid_asset")
 	})
 }
@@ -388,7 +392,7 @@ func TestCreateRejectsUnknownEnumsAndOutOfRangeFields(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Create(ctx, f.db, tc.in, testNow)
+			_, err := Create(ctx, f.db, f.ownerID, tc.in, testNow)
 			assertValidation(t, err, tc.wantErr)
 		})
 	}
@@ -408,7 +412,7 @@ func TestBodyHTMLIsRenderedAndSanitized(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	post, err := Create(ctx, f.db, Input{
+	post, err := Create(ctx, f.db, f.ownerID, Input{
 		Type:   TypeArticle,
 		Status: StatusPublished,
 		Title:  "写作",
@@ -440,7 +444,7 @@ func TestMomentBodyIsPlainText(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	post, err := Create(ctx, f.db, Input{
+	post, err := Create(ctx, f.db, f.ownerID, Input{
 		Type:   TypeMoment,
 		Status: StatusPublished,
 		Body:   "第一行 <b>不是标签</b>\n第二行",
@@ -465,11 +469,11 @@ func TestSlugCollisionGetsSuffix(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	first, err := Create(ctx, f.db, Input{Type: TypeArticle, Status: StatusPublished, Title: "同名文章", Body: "正文"}, testNow)
+	first, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeArticle, Status: StatusPublished, Title: "同名文章", Body: "正文"}, testNow)
 	if err != nil {
 		t.Fatalf("first Create: %v", err)
 	}
-	second, err := Create(ctx, f.db, Input{Type: TypeArticle, Status: StatusPublished, Title: "同名文章", Body: "正文"}, testNow)
+	second, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeArticle, Status: StatusPublished, Title: "同名文章", Body: "正文"}, testNow)
 	if err != nil {
 		t.Fatalf("second Create: %v", err)
 	}
@@ -485,7 +489,7 @@ func TestSlugFallsBackToTypeAndTimestamp(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	post, err := Create(ctx, f.db, Input{Type: TypeMoment, Status: StatusPublished, Body: "！！！"}, testNow)
+	post, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeMoment, Status: StatusPublished, Body: "！！！"}, testNow)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -498,13 +502,13 @@ func TestSlugIsStableAcrossUpdates(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	created, err := Create(ctx, f.db, Input{Type: TypeArticle, Status: StatusDraft, Title: "初稿标题"}, testNow)
+	created, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeArticle, Status: StatusDraft, Title: "初稿标题"}, testNow)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	title := "改过的标题"
 	body := "正文"
-	updated, err := Update(ctx, f.db, created.ID, Patch{
+	updated, err := Update(ctx, f.db, f.ownerID, created.ID, Patch{
 		UpdatedAt: created.UpdatedAt,
 		Title:     &title,
 		Body:      &body,
@@ -523,13 +527,13 @@ func TestUpdateRequiresMatchingUpdatedAt(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	created, err := Create(ctx, f.db, Input{Type: TypeMoment, Status: StatusPublished, Body: "第一版"}, testNow)
+	created, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeMoment, Status: StatusPublished, Body: "第一版"}, testNow)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	stale := "过期写入"
-	_, err = Update(ctx, f.db, created.ID, Patch{
+	_, err = Update(ctx, f.db, f.ownerID, created.ID, Patch{
 		UpdatedAt: testNow.Add(-time.Hour).Format(time.RFC3339),
 		Body:      &stale,
 	}, testNow.Add(time.Minute))
@@ -546,7 +550,7 @@ func TestUpdateRequiresMatchingUpdatedAt(t *testing.T) {
 	}
 
 	next := "第二版"
-	updated, err := Update(ctx, f.db, created.ID, Patch{
+	updated, err := Update(ctx, f.db, f.ownerID, created.ID, Patch{
 		UpdatedAt: created.UpdatedAt,
 		Body:      &next,
 	}, testNow.Add(time.Minute))
@@ -568,13 +572,13 @@ func TestUpdatedAtAdvancesWithinOneClockTick(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	created, err := Create(ctx, f.db, Input{Type: TypeMoment, Status: StatusPublished, Body: "第一版"}, testNow)
+	created, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeMoment, Status: StatusPublished, Body: "第一版"}, testNow)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	second := "第二版"
-	first, err := Update(ctx, f.db, created.ID, Patch{UpdatedAt: created.UpdatedAt, Body: &second}, testNow)
+	first, err := Update(ctx, f.db, f.ownerID, created.ID, Patch{UpdatedAt: created.UpdatedAt, Body: &second}, testNow)
 	if err != nil {
 		t.Fatalf("first update: %v", err)
 	}
@@ -583,7 +587,7 @@ func TestUpdatedAtAdvancesWithinOneClockTick(t *testing.T) {
 	}
 
 	third := "第三版"
-	again, err := Update(ctx, f.db, created.ID, Patch{UpdatedAt: first.UpdatedAt, Body: &third}, testNow)
+	again, err := Update(ctx, f.db, f.ownerID, created.ID, Patch{UpdatedAt: first.UpdatedAt, Body: &third}, testNow)
 	if err != nil {
 		t.Fatalf("second update: %v", err)
 	}
@@ -592,21 +596,121 @@ func TestUpdatedAtAdvancesWithinOneClockTick(t *testing.T) {
 	}
 
 	stale := "过期写入"
-	if _, err := Update(ctx, f.db, created.ID, Patch{UpdatedAt: created.UpdatedAt, Body: &stale}, testNow); !errors.Is(err, ErrConflict) {
+	if _, err := Update(ctx, f.db, f.ownerID, created.ID, Patch{UpdatedAt: created.UpdatedAt, Body: &stale}, testNow); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale write error = %v, want ErrConflict", err)
 	}
+}
+
+// insertAssetFor creates an asset row for an explicit owner and MIME type, so
+// ownership and image-type checks can be exercised with real rows.
+func insertAssetFor(t *testing.T, db *sql.DB, ownerID int64, key, mime string) int64 {
+	t.Helper()
+	digest := sha256.Sum256([]byte(key))
+	res, err := db.Exec(
+		`INSERT INTO assets(owner_user_id, storage_key, original_name, mime_type, size_bytes, sha256, created_at)
+		 VALUES(?,?,?,?,?,?,?)`,
+		ownerID, key, filepath.Base(key), mime, 1024, digest[:], testNow.Format(time.RFC3339))
+	if err != nil {
+		t.Fatalf("insert asset for %d: %v", ownerID, err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("asset id: %v", err)
+	}
+	return id
+}
+
+// countRows is a small helper for the rollback assertions below.
+func countRows(t *testing.T, db *sql.DB, table string) int {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+		t.Fatalf("count %s: %v", table, err)
+	}
+	return count
+}
+
+func TestAssetReferencesMustBelongToTheWriterAndBeImages(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	mine := f.insertAsset(t, "photos/mine.jpg")
+	theirs := insertAssetFor(t, f.db, f.readerID, "photos/theirs.jpg", "image/jpeg")
+	document := insertAssetFor(t, f.db, f.ownerID, "files/notes.pdf", "application/pdf")
+
+	cases := []struct {
+		name string
+		ids  []int64
+	}{
+		{"another owner's image", []int64{theirs}},
+		{"non-image asset", []int64{document}},
+		{"own image mixed with a foreign one", []int64{mine, theirs}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Create(ctx, f.db, f.ownerID, Input{Type: TypePhoto, Status: StatusPublished, AssetIDs: tc.ids}, testNow)
+			if err == nil {
+				t.Fatal("create accepted an asset the writer cannot use")
+			}
+			assertValidation(t, err, "invalid_asset")
+			if posts := countRows(t, f.db, "posts"); posts != 0 {
+				t.Errorf("posts = %d, want the rejected create to leave nothing behind", posts)
+			}
+			if links := countRows(t, f.db, "post_assets"); links != 0 {
+				t.Errorf("post_assets = %d, want no relationship row", links)
+			}
+		})
+	}
+
+	t.Run("draft to published keeps the image requirement", func(t *testing.T) {
+		drafted, err := Create(ctx, f.db, f.ownerID, Input{Type: TypePhoto, Status: StatusDraft, Body: "待发布"}, testNow)
+		if err != nil {
+			t.Fatalf("create draft: %v", err)
+		}
+		published := StatusPublished
+		if _, err := Update(ctx, f.db, f.ownerID, drafted.ID, Patch{UpdatedAt: drafted.UpdatedAt, Status: &published}, testNow); err == nil {
+			t.Fatal("an image-free draft was published")
+		} else {
+			assertValidation(t, err, "invalid_assets")
+		}
+		if links := countRows(t, f.db, "post_assets"); links != 0 {
+			t.Errorf("post_assets = %d, want the failed transition to leave no row", links)
+		}
+
+		assets := []int64{mine}
+		fixed, err := Update(ctx, f.db, f.ownerID, drafted.ID, Patch{UpdatedAt: drafted.UpdatedAt, AssetIDs: &assets, Status: &published}, testNow)
+		if err != nil {
+			t.Fatalf("publish with an own image: %v", err)
+		}
+		if fixed.Status != StatusPublished || len(fixed.Assets) != 1 {
+			t.Errorf("published post = %+v, want one attached image", fixed)
+		}
+	})
+
+	t.Run("foreign asset cannot be attached to a draft either", func(t *testing.T) {
+		drafted, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeMoment, Status: StatusDraft, Body: "草稿"}, testNow)
+		if err != nil {
+			t.Fatalf("create draft: %v", err)
+		}
+		assets := []int64{theirs}
+		if _, err := Update(ctx, f.db, f.ownerID, drafted.ID, Patch{UpdatedAt: drafted.UpdatedAt, AssetIDs: &assets}, testNow); err == nil {
+			t.Fatal("update attached a foreign asset")
+		} else {
+			assertValidation(t, err, "invalid_asset")
+		}
+	})
 }
 
 func TestUpdateRequiresAnUpdatedAtValue(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	created, err := Create(ctx, f.db, Input{Type: TypeMoment, Status: StatusPublished, Body: "正文"}, testNow)
+	created, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeMoment, Status: StatusPublished, Body: "正文"}, testNow)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	body := "新正文"
-	if _, err := Update(ctx, f.db, created.ID, Patch{Body: &body}, testNow); err == nil {
+	if _, err := Update(ctx, f.db, f.ownerID, created.ID, Patch{Body: &body}, testNow); err == nil {
 		t.Fatal("update without updated_at was accepted")
 	} else {
 		assertValidation(t, err, "invalid_updated_at")
@@ -616,7 +720,7 @@ func TestUpdateRequiresAnUpdatedAtValue(t *testing.T) {
 func TestUpdateUnknownPost(t *testing.T) {
 	f := newFixture(t)
 	body := "正文"
-	_, err := Update(context.Background(), f.db, 4242, Patch{UpdatedAt: testNow.Format(time.RFC3339), Body: &body}, testNow)
+	_, err := Update(context.Background(), f.db, f.ownerID, 4242, Patch{UpdatedAt: testNow.Format(time.RFC3339), Body: &body}, testNow)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("error = %v, want ErrNotFound", err)
 	}
@@ -626,12 +730,12 @@ func TestUpdateRevalidatesTheMergedPost(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	draft, err := Create(ctx, f.db, Input{Type: TypeArticle, Status: StatusDraft, Title: "标题"}, testNow)
+	draft, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeArticle, Status: StatusDraft, Title: "标题"}, testNow)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	published := StatusPublished
-	_, err = Update(ctx, f.db, draft.ID, Patch{UpdatedAt: draft.UpdatedAt, Status: &published}, testNow.Add(time.Minute))
+	_, err = Update(ctx, f.db, f.ownerID, draft.ID, Patch{UpdatedAt: draft.UpdatedAt, Status: &published}, testNow.Add(time.Minute))
 	assertValidation(t, err, "invalid_body")
 }
 
@@ -639,7 +743,7 @@ func TestPublishTransitionSetsPublishedAtOnce(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	draft, err := Create(ctx, f.db, Input{Type: TypeMoment, Status: StatusDraft, Body: "草稿正文"}, testNow)
+	draft, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeMoment, Status: StatusDraft, Body: "草稿正文"}, testNow)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -648,7 +752,7 @@ func TestPublishTransitionSetsPublishedAtOnce(t *testing.T) {
 	}
 
 	published := StatusPublished
-	first, err := Update(ctx, f.db, draft.ID, Patch{UpdatedAt: draft.UpdatedAt, Status: &published}, testNow.Add(time.Hour))
+	first, err := Update(ctx, f.db, f.ownerID, draft.ID, Patch{UpdatedAt: draft.UpdatedAt, Status: &published}, testNow.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
@@ -657,7 +761,7 @@ func TestPublishTransitionSetsPublishedAtOnce(t *testing.T) {
 	}
 
 	body := "补充说明"
-	second, err := Update(ctx, f.db, draft.ID, Patch{UpdatedAt: first.UpdatedAt, Body: &body}, testNow.Add(2*time.Hour))
+	second, err := Update(ctx, f.db, f.ownerID, draft.ID, Patch{UpdatedAt: first.UpdatedAt, Body: &body}, testNow.Add(2*time.Hour))
 	if err != nil {
 		t.Fatalf("second update: %v", err)
 	}
@@ -673,7 +777,7 @@ func TestUpdateReplacesAssetsAndTags(t *testing.T) {
 	first := f.insertAsset(t, "photos/first.jpg")
 	second := f.insertAsset(t, "photos/second.jpg")
 
-	post, err := Create(ctx, f.db, Input{
+	post, err := Create(ctx, f.db, f.ownerID, Input{
 		Type: TypePhoto, Status: StatusPublished,
 		AssetIDs: []int64{first}, Tags: []string{"海边"},
 	}, testNow)
@@ -683,7 +787,7 @@ func TestUpdateReplacesAssetsAndTags(t *testing.T) {
 
 	nextAssets := []int64{second}
 	nextTags := []string{"海边", "雾"}
-	updated, err := Update(ctx, f.db, post.ID, Patch{
+	updated, err := Update(ctx, f.db, f.ownerID, post.ID, Patch{
 		UpdatedAt: post.UpdatedAt, AssetIDs: &nextAssets, Tags: &nextTags,
 	}, testNow.Add(time.Minute))
 	if err != nil {
@@ -713,13 +817,13 @@ func TestUpdateToEmptyAssetsOnPublishedPhoto(t *testing.T) {
 	ctx := context.Background()
 	assetID := f.insertAsset(t, "photos/only.jpg")
 
-	post, err := Create(ctx, f.db, Input{Type: TypePhoto, Status: StatusPublished, AssetIDs: []int64{assetID}}, testNow)
+	post, err := Create(ctx, f.db, f.ownerID, Input{Type: TypePhoto, Status: StatusPublished, AssetIDs: []int64{assetID}}, testNow)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	empty := []int64{}
-	_, err = Update(ctx, f.db, post.ID, Patch{UpdatedAt: post.UpdatedAt, AssetIDs: &empty}, testNow.Add(time.Minute))
+	_, err = Update(ctx, f.db, f.ownerID, post.ID, Patch{UpdatedAt: post.UpdatedAt, AssetIDs: &empty}, testNow.Add(time.Minute))
 	assertValidation(t, err, "invalid_assets")
 
 	var links int
@@ -738,7 +842,7 @@ func TestFailedRelationshipWriteRollsBackThePost(t *testing.T) {
 	ctx := context.Background()
 
 	before := f.count(t, `SELECT COUNT(*) FROM posts`)
-	_, err := Create(ctx, f.db, Input{
+	_, err := Create(ctx, f.db, f.ownerID, Input{
 		Type: TypePhoto, Status: StatusPublished, AssetIDs: []int64{f.insertAsset(t, "photos/ok.jpg"), 9999},
 	}, testNow)
 	assertValidation(t, err, "invalid_asset")
@@ -755,11 +859,11 @@ func TestTagReuseIsCaseInsensitiveAndSlugged(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	first, err := Create(ctx, f.db, Input{Type: TypeMoment, Status: StatusPublished, Body: "一", Tags: []string{"Go 语言"}}, testNow)
+	first, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeMoment, Status: StatusPublished, Body: "一", Tags: []string{"Go 语言"}}, testNow)
 	if err != nil {
 		t.Fatalf("first Create: %v", err)
 	}
-	second, err := Create(ctx, f.db, Input{Type: TypeMoment, Status: StatusPublished, Body: "二", Tags: []string{"go 语言"}}, testNow)
+	second, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeMoment, Status: StatusPublished, Body: "二", Tags: []string{"go 语言"}}, testNow)
 	if err != nil {
 		t.Fatalf("second Create: %v", err)
 	}
@@ -783,7 +887,7 @@ func TestDeleteIsSoft(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	post, err := Create(ctx, f.db, Input{Type: TypeMoment, Status: StatusPublished, Body: "将被删除"}, testNow)
+	post, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeMoment, Status: StatusPublished, Body: "将被删除"}, testNow)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -833,11 +937,11 @@ func TestFeedVisibility(t *testing.T) {
 		{Type: TypeArticle, Status: StatusArchived, Title: "归档文章", Body: "正文"},
 	}
 	for i, in := range seed {
-		if _, err := Create(ctx, f.db, in, testNow.Add(time.Duration(i)*time.Minute)); err != nil {
+		if _, err := Create(ctx, f.db, f.ownerID, in, testNow.Add(time.Duration(i)*time.Minute)); err != nil {
 			t.Fatalf("Create %d: %v", i, err)
 		}
 	}
-	removed, err := Create(ctx, f.db, Input{Type: TypeMoment, Status: StatusPublished, Body: "已删除"}, testNow.Add(time.Hour))
+	removed, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeMoment, Status: StatusPublished, Body: "已删除"}, testNow.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("Create deleted: %v", err)
 	}
@@ -895,7 +999,7 @@ func TestFeedPaginationIsStable(t *testing.T) {
 	// Every post shares one published_at, so ordering must fall back to id.
 	const total = 7
 	for i := 0; i < total; i++ {
-		if _, err := Create(ctx, f.db, Input{
+		if _, err := Create(ctx, f.db, f.ownerID, Input{
 			Type: TypeMoment, Status: StatusPublished, Body: fmt.Sprintf("第 %d 条", i),
 		}, testNow); err != nil {
 			t.Fatalf("Create %d: %v", i, err)
@@ -966,7 +1070,7 @@ func TestFeedLoadsCountsAssetsAndTags(t *testing.T) {
 	ctx := context.Background()
 	assetID := f.insertAsset(t, "photos/counts.jpg")
 
-	post, err := Create(ctx, f.db, Input{
+	post, err := Create(ctx, f.db, f.ownerID, Input{
 		Type: TypePhoto, Status: StatusPublished, Body: "统计", AssetIDs: []int64{assetID}, Tags: []string{"海边"},
 	}, testNow)
 	if err != nil {
@@ -1012,7 +1116,7 @@ func TestFeedQueryCountIsConstant(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
-		if _, err := Create(ctx, f.db, Input{Type: TypeMoment, Status: StatusPublished, Body: fmt.Sprintf("少量 %d", i)}, testNow); err != nil {
+		if _, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeMoment, Status: StatusPublished, Body: fmt.Sprintf("少量 %d", i)}, testNow); err != nil {
 			t.Fatalf("Create: %v", err)
 		}
 	}
@@ -1020,7 +1124,7 @@ func TestFeedQueryCountIsConstant(t *testing.T) {
 	small := f.measure(t, func() { mustFeed(t, ctx, f.counted) })
 
 	for i := 0; i < 27; i++ {
-		if _, err := Create(ctx, f.db, Input{Type: TypeMoment, Status: StatusPublished, Body: fmt.Sprintf("大量 %d", i)}, testNow); err != nil {
+		if _, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeMoment, Status: StatusPublished, Body: fmt.Sprintf("大量 %d", i)}, testNow); err != nil {
 			t.Fatalf("Create: %v", err)
 		}
 	}
@@ -1062,7 +1166,7 @@ func TestBySlugReturnsPublishedPostWithRelations(t *testing.T) {
 	ctx := context.Background()
 	assetID := f.insertAsset(t, "photos/detail.jpg")
 
-	post, err := Create(ctx, f.db, Input{
+	post, err := Create(ctx, f.db, f.ownerID, Input{
 		Type: TypeArticle, Status: StatusPublished, Title: "详情页", Body: "**正文**",
 		AssetIDs: []int64{assetID}, Tags: []string{"写作", "Go"},
 	}, testNow)
@@ -1077,7 +1181,7 @@ func TestBySlugReturnsPublishedPostWithRelations(t *testing.T) {
 		t.Fatalf("deleted detail error = %v, want ErrNotFound", err)
 	}
 
-	fresh, err := Create(ctx, f.db, Input{
+	fresh, err := Create(ctx, f.db, f.ownerID, Input{
 		Type: TypeArticle, Status: StatusPublished, Title: "详情页二", Body: "**正文**",
 		AssetIDs: []int64{assetID}, Tags: []string{"写作", "Go"},
 	}, testNow)
@@ -1111,7 +1215,7 @@ func TestBySlugHidesDrafts(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	draft, err := Create(ctx, f.db, Input{Type: TypeArticle, Status: StatusDraft, Title: "草稿", Body: "正文"}, testNow)
+	draft, err := Create(ctx, f.db, f.ownerID, Input{Type: TypeArticle, Status: StatusDraft, Title: "草稿", Body: "正文"}, testNow)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

@@ -47,11 +47,19 @@
 | POST | `/api/v1/admin/posts` | type,status,title,body,excerpt,asset_ids,tags,location,captured_at |
 | PATCH | `/api/v1/admin/posts/{id}` | 上述字段的部分更新，带 `updated_at` 乐观锁 |
 | DELETE | `/api/v1/admin/posts/{id}` | 软删除 |
-| POST | `/api/v1/admin/uploads` | multipart 单文件；jpg/png/webp/gif，默认最大 10MB |
+| POST | `/api/v1/admin/uploads` | multipart 单文件，字段名 `file`；jpg/png/webp/gif，默认最大 10MB |
 | GET | `/api/v1/admin/comments?status=pending` | 审核队列 |
 | POST | `/api/v1/admin/comments/{id}/approve` | 批准 |
 | POST | `/api/v1/admin/comments/{id}/reject` | 拒绝 |
 | DELETE | `/api/v1/admin/comments/{id}` | 管理删除 |
+
+上传与图片服务：
+
+- 文件类型由字节推断（`http.DetectContentType`），不信任客户端 MIME：扩展名与内容不符返回 400 `invalid_filename`，内容不是 jpg/png/webp/gif 返回 415 `unsupported_media_type`，请求体或文件超过 `BOOP_MAX_UPLOAD_MB`（含 multipart 封装开销）返回 413 `payload_too_large`，缺少文件、多个文件或非 multipart 请求返回 400 `invalid_body`。
+- 新文件返回 201；相同字节且属于同一站长时返回 200 且 `reused=true`，复用既有 asset 与文件。响应字段：`id`、`url`、`storage_key`、`mime_type`、`size_bytes`、`width`、`height`、`original_name`、`reused`。
+- 客户端文件名只作为 `original_name` 元数据保存，绝不进入路径；`storage_key` 由服务端生成为 `YYYY/MM/<32 位随机十六进制>.<ext>`。
+- `asset_ids` 必须是当前站长上传过的图片资源：不存在、不属于自己或不是图片 MIME 均返回 400 `invalid_asset`；发布 `photo` 至少需要一张这样的图片，否则返回 400 `invalid_assets`。
+- `GET /uploads/{storage_key}` 公开只读、无需登录；键形状不符、目录穿越或文件不存在均返回 404，响应带 `Content-Type`、`nosniff` 与 `Cache-Control: public, max-age=31536000, immutable`。
 
 ## 设置与 AI
 

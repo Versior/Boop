@@ -97,6 +97,7 @@ func TestMigrateCreatesDocumentedSchema(t *testing.T) {
 	indexes := []string{
 		"idx_sessions_expires", "idx_posts_feed", "idx_posts_type_feed",
 		"idx_post_assets_order", "idx_comments_post", "idx_comments_queue", "idx_bookmarks_user",
+		"idx_assets_owner_hash",
 	}
 	for _, name := range indexes {
 		var count int
@@ -119,8 +120,8 @@ func TestMigrateCreatesDocumentedSchema(t *testing.T) {
 		}
 	}
 
-	if got := LatestVersion(); got != 2 {
-		t.Errorf("LatestVersion() = %d, want 2", got)
+	if got := LatestVersion(); got != 3 {
+		t.Errorf("LatestVersion() = %d, want 3", got)
 	}
 	version, err := CurrentVersion(context.Background(), db)
 	if err != nil {
@@ -357,6 +358,36 @@ func TestPostConstraintsMatchDocumentation(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO assets(owner_user_id, storage_key, original_name, mime_type, size_bytes, sha256, created_at)
 		VALUES(1,'k','n','image/png',-1,x'00',?)`, now); err == nil {
 		t.Error("assets accepted a negative size_bytes")
+	}
+}
+
+// Uploads are deduplicated by content hash per owner (docs/DATABASE.md), so the
+// index must reject a second row for the same bytes and the same user while
+// still allowing the identical bytes for a different user.
+func TestAssetContentHashIsUniquePerOwner(t *testing.T) {
+	db := migratedDB(t)
+	now := "2026-09-28T00:00:00Z"
+
+	for _, email := range []string{"one@example.com", "two@example.com"} {
+		if _, err := db.Exec(`INSERT INTO users(email, display_name, role, created_at, updated_at) VALUES(?,?,?,?,?)`,
+			email, email, "reader", now, now); err != nil {
+			t.Fatalf("insert user: %v", err)
+		}
+	}
+	insert := func(owner int64, key string) error {
+		_, err := db.Exec(`INSERT INTO assets(owner_user_id, storage_key, original_name, mime_type, size_bytes, sha256, created_at)
+			VALUES(?,?,'sea.jpg','image/jpeg',2048,x'aa',?)`, owner, key, now)
+		return err
+	}
+
+	if err := insert(1, "2026/09/one.jpg"); err != nil {
+		t.Fatalf("first asset rejected: %v", err)
+	}
+	if err := insert(1, "2026/09/two.jpg"); err == nil {
+		t.Error("assets accepted the same bytes twice for one owner")
+	}
+	if err := insert(2, "2026/09/three.jpg"); err != nil {
+		t.Errorf("the same bytes were rejected for another owner: %v", err)
 	}
 }
 

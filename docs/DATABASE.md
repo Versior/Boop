@@ -87,6 +87,7 @@ CREATE TABLE post_assets (
   PRIMARY KEY(post_id, asset_id)
 );
 CREATE INDEX idx_post_assets_order ON post_assets(post_id, sort_order);
+CREATE UNIQUE INDEX idx_assets_owner_hash ON assets(owner_user_id, sha256);
 
 CREATE TABLE tags (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -168,7 +169,8 @@ CREATE VIRTUAL TABLE post_search USING fts5(
 ## 约束与事务规则
 
 - 创建评论时校验父评论属于同一文章，且父评论本身没有父级。
-- 发布 `photo` 必须在同一事务中确认至少一个 `post_assets`。
+- 发布 `photo` 必须在同一事务中确认至少一个属于当前 owner 且为图片 MIME 的 `assets` 行。
+- 本地上传按 `(owner_user_id, sha256)` 去重：相同字节只保留一行 asset 和一个文件，由 `idx_assets_owner_hash` 唯一索引保证（迁移 003），不依赖应用层的查询时序。
 - 发布 `article` 必须有标题和正文；发布 `moment` 必须有正文。
 - `cover_asset_id` 在迁移 002 中通过触发器或应用事务校验属于当前文章，不建立会造成建表顺序循环的外键。
 - 点赞、收藏使用 `INSERT ... ON CONFLICT DO NOTHING` 与 `DELETE`，响应返回最终状态和计数。

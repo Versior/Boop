@@ -38,7 +38,11 @@ func newAuthFixture(t *testing.T) *authFixture {
 
 func newAuthFixtureWithConfig(t *testing.T, cfg config.Config) *authFixture {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "boop.db"))
+	databasePath := filepath.Join(t.TempDir(), "boop.db")
+	// Uploads land in the same throwaway directory as the database, so no test
+	// can write into the repository or the real data directory.
+	cfg.DataDir = filepath.Dir(databasePath)
+	db, err := store.Open(databasePath)
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}

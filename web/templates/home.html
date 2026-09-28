@@ -17,7 +17,11 @@
 
           <div class="composer-drop" data-composer-drop hidden>
             <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-image"/></svg>
-            <span>摄影模式需要一张图片；图片上传将在后续版本提供，现在发布会得到校验错误。</span>
+            <label class="composer-pick" for="composer-file">选择图片</label>
+            <input class="sr-only" id="composer-file" data-composer-file type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif" aria-describedby="composer-file-hint">
+            <span class="composer-drop-hint" id="composer-file-hint" data-composer-file-hint>支持 jpg、png、webp、gif；选图后立即上传，发布时使用已上传的图片。</span>
+            <img class="composer-preview" data-composer-preview alt="待发布的图片预览" hidden>
           </div>
 
           <label class="sr-only" for="composer-tags">标签</label>

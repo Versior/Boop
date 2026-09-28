@@ -53,14 +53,15 @@ func (s *server) requireOwner(w http.ResponseWriter, r *http.Request) (auth.User
 }
 
 func (s *server) handleCreatePostAPI(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireOwner(w, r); !ok {
+	owner, ok := s.requireOwner(w, r)
+	if !ok {
 		return
 	}
 	var body createPostRequest
 	if !s.readJSON(w, r, &body, contentJSONBytes) {
 		return
 	}
-	post, err := content.Create(r.Context(), s.db, content.Input{
+	post, err := content.Create(r.Context(), s.db, owner.ID, content.Input{
 		Type:       body.Type,
 		Status:     body.Status,
 		Title:      body.Title,
@@ -79,7 +80,8 @@ func (s *server) handleCreatePostAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handlePatchPostAPI(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireOwner(w, r); !ok {
+	owner, ok := s.requireOwner(w, r)
+	if !ok {
 		return
 	}
 	id, ok := s.postIDFrom(w, r)
@@ -103,7 +105,7 @@ func (s *server) handlePatchPostAPI(w http.ResponseWriter, r *http.Request) {
 	if body.UpdatedAt != nil {
 		patch.UpdatedAt = *body.UpdatedAt
 	}
-	post, err := content.Update(r.Context(), s.db, id, patch, time.Now())
+	post, err := content.Update(r.Context(), s.db, owner.ID, id, patch, time.Now())
 	if err != nil {
 		s.writeContentFailure(w, r, "update post", err)
 		return
@@ -141,7 +143,8 @@ func (s *server) postIDFrom(w http.ResponseWriter, r *http.Request) (int64, bool
 // adminRouteMethods documents the owner-only endpoint methods so a mismatch is
 // answered as JSON with an Allow header instead of ServeMux plain text.
 var adminRouteMethods = map[string]string{
-	"/api/v1/admin/posts": http.MethodPost,
+	"/api/v1/admin/posts":   http.MethodPost,
+	"/api/v1/admin/uploads": http.MethodPost,
 }
 
 // handleAdminFallback keeps every /api/v1/admin answer JSON.
