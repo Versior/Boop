@@ -199,7 +199,9 @@ func isHostname(host string) bool {
 	return true
 }
 
-// normalizeBaseURL requires an absolute http(s) URL and drops a trailing slash.
+// normalizeBaseURL requires an absolute http(s) URL rooted at the host with no
+// credentials, query, fragment or sub-path: it is a canonical origin used to
+// build absolute links and cookie scopes.
 func normalizeBaseURL(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil {
@@ -211,8 +213,14 @@ func normalizeBaseURL(raw string) (string, error) {
 	if parsed.Host == "" {
 		return "", fmt.Errorf("%q has no host", raw)
 	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("%q must not contain credentials", raw)
+	}
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", fmt.Errorf("%q must not contain a query or fragment", raw)
 	}
-	return strings.TrimSuffix(parsed.Scheme+"://"+parsed.Host+parsed.Path, "/"), nil
+	if path := strings.TrimSuffix(parsed.Path, "/"); path != "" {
+		return "", fmt.Errorf("%q must not contain a path", raw)
+	}
+	return parsed.Scheme + "://" + parsed.Host, nil
 }

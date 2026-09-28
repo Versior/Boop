@@ -3,6 +3,8 @@ package settings
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -196,6 +198,120 @@ func TestLoadIgnoresUnknownKeys(t *testing.T) {
 	if _, err := Load(ctx, db); err != nil {
 		t.Fatalf("Load with an unknown key: %v", err)
 	}
+}
+
+func TestSetValidatesKnownKeys(t *testing.T) {
+	ctx := context.Background()
+	// One migrated database for the whole table: every case compares the row
+	// before and after its own write, so cases stay independent.
+	db := testDB(t)
+	if err := Seed(ctx, db); err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	longRunes := func(n int) string { return strings.Repeat("字", n) }
+
+	tests := []struct {
+		name    string
+		key     string
+		value   any
+		wantErr bool
+	}{
+		{"page size at lower bound", KeyContentPageSize, 1, false},
+		{"page size at upper bound", KeyContentPageSize, 50, false},
+		{"page size zero", KeyContentPageSize, 0, true},
+		{"page size above upper bound", KeyContentPageSize, 51, true},
+		{"page size negative", KeyContentPageSize, -1, true},
+		{"page size as string", KeyContentPageSize, "20", true},
+		{"page size as float", KeyContentPageSize, 20.0, true},
+		{"ttl at lower bound", KeyAIAuthorStatusTTLHours, 1, false},
+		{"ttl at upper bound", KeyAIAuthorStatusTTLHours, 2160, false},
+		{"ttl zero", KeyAIAuthorStatusTTLHours, 0, true},
+		{"ttl above upper bound", KeyAIAuthorStatusTTLHours, 2161, true},
+		{"ttl as string", KeyAIAuthorStatusTTLHours, "168", true},
+		{"boolean key with bool", KeyAIEnabled, true, false},
+		{"boolean key with string", KeyAIEnabled, "true", true},
+		{"boolean key with int", KeyCommentsEnabled, 1, true},
+		{"boolean key with nil", KeyCommentsModerationEnabled, nil, true},
+		{"site name", KeySiteName, "少爷的博客", false},
+		{"site name at upper bound", KeySiteName, longRunes(80), false},
+		{"site name empty", KeySiteName, "", true},
+		{"site name blank", KeySiteName, "   ", true},
+		{"site name too long", KeySiteName, longRunes(81), true},
+		{"site name wrong type", KeySiteName, 5, true},
+		{"description empty", KeySiteDescription, "", false},
+		{"description at upper bound", KeySiteDescription, longRunes(280), false},
+		{"description too long", KeySiteDescription, longRunes(281), true},
+		{"description wrong type", KeySiteDescription, true, true},
+		{"timezone utc", KeySiteTimezone, "UTC", false},
+		{"timezone shanghai", KeySiteTimezone, "Asia/Shanghai", false},
+		{"timezone empty", KeySiteTimezone, "", true},
+		{"timezone unknown", KeySiteTimezone, "Mars/Olympus", true},
+		{"timezone wrong type", KeySiteTimezone, 8, true},
+		{"ai base url empty", KeyAIBaseURL, "", false},
+		{"ai base url https", KeyAIBaseURL, "https://api.example.com/v1", false},
+		{"ai base url http", KeyAIBaseURL, "http://127.0.0.1:11434/v1", false},
+		{"ai base url relative", KeyAIBaseURL, "/v1", true},
+		{"ai base url wrong scheme", KeyAIBaseURL, "ftp://example.com", true},
+		{"ai base url with userinfo", KeyAIBaseURL, "https://user:pass@example.com/v1", true},
+		{"ai base url with query", KeyAIBaseURL, "https://example.com/v1?key=1", true},
+		{"ai base url with fragment", KeyAIBaseURL, "https://example.com/v1#frag", true},
+		{"ai base url wrong type", KeyAIBaseURL, 12, true},
+		{"model at upper bound", KeyAIChatModel, longRunes(200), false},
+		{"model too long", KeyAIChatModel, longRunes(201), true},
+		{"embedding model empty", KeyAIEmbeddingModel, "", false},
+		{"embedding model too long", KeyAIEmbeddingModel, strings.Repeat("m", 201), true},
+		{"embedding model wrong type", KeyAIEmbeddingModel, 3, true},
+		{"unknown key", "site.nope", "x", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before, beforeAt := storedRow(t, db, tt.key)
+
+			err := Set(ctx, db, tt.key, tt.value)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Set(%s, %#v) succeeded, want error", tt.key, tt.value)
+				}
+				after, afterAt := storedRow(t, db, tt.key)
+				if after != before || afterAt != beforeAt {
+					t.Errorf("rejected value changed the row: %q@%s -> %q@%s", before, beforeAt, after, afterAt)
+				}
+				if _, err := Load(ctx, db); err != nil {
+					t.Errorf("Load after a rejected write: %v", err)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Set(%s, %#v): %v", tt.key, tt.value, err)
+			}
+			encoded, err := json.Marshal(tt.value)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			after, _ := storedRow(t, db, tt.key)
+			if after != string(encoded) {
+				t.Errorf("stored %q, want %q", after, encoded)
+			}
+		})
+	}
+}
+
+// storedRow reads the raw stored value of a key; a key with no row returns
+// empty strings, which is also the state a rejected first write must leave
+// behind.
+func storedRow(t *testing.T, db *sql.DB, key string) (string, string) {
+	t.Helper()
+	var raw, updatedAt string
+	err := db.QueryRow(`SELECT value_json, updated_at FROM settings WHERE key = ?`, key).Scan(&raw, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ""
+	}
+	if err != nil {
+		t.Fatalf("read settings row: %v", err)
+	}
+	return raw, updatedAt
 }
 
 func TestSetRejectsUnknownKey(t *testing.T) {

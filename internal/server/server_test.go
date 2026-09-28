@@ -295,6 +295,62 @@ func TestRecoveryRendersHTMLForPages(t *testing.T) {
 	}
 }
 
+func TestStatusRecorderUnwrapReachesTheRealWriter(t *testing.T) {
+	base := httptest.NewRecorder()
+	recorder := &statusRecorder{ResponseWriter: base}
+
+	if got := recorder.Unwrap(); got != http.ResponseWriter(base) {
+		t.Fatalf("Unwrap() = %#v, want the wrapped writer", got)
+	}
+
+	controller := http.NewResponseController(recorder)
+	if err := controller.Flush(); err != nil {
+		t.Fatalf("Flush through the recorder: %v", err)
+	}
+	if !base.Flushed {
+		t.Error("the underlying writer was not flushed")
+	}
+
+	if _, err := recorder.Write([]byte("hello")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if recorder.status != http.StatusOK || recorder.bytes != 5 {
+		t.Errorf("status = %d, bytes = %d, want 200 and 5", recorder.status, recorder.bytes)
+	}
+}
+
+// opaqueWriter hides everything the embedded ResponseWriter supports, emulating
+// a writer that implements neither Flusher nor Unwrap.
+type opaqueWriter struct {
+	http.ResponseWriter
+}
+
+func TestStatusRecorderIsRequiredForFlush(t *testing.T) {
+	// Without Unwrap the controller cannot see the Flusher underneath, which is
+	// why the recorder must expose the wrapped writer.
+	controller := http.NewResponseController(opaqueWriter{ResponseWriter: httptest.NewRecorder()})
+	if err := controller.Flush(); !errors.Is(err, http.ErrNotSupported) {
+		t.Fatalf("Flush without Unwrap = %v, want %v", err, http.ErrNotSupported)
+	}
+}
+
+func TestResponseControllerReachesTheWriterThroughTheChain(t *testing.T) {
+	base := httptest.NewRecorder()
+	var flushErr error
+	handler := accessLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flushErr = http.NewResponseController(w).Flush()
+	}), discardLogger())
+
+	handler.ServeHTTP(base, httptest.NewRequest(http.MethodGet, "/stream", nil))
+
+	if flushErr != nil {
+		t.Fatalf("Flush through the middleware chain: %v", flushErr)
+	}
+	if !base.Flushed {
+		t.Error("the response was not flushed through the chain")
+	}
+}
+
 func TestAccessLogWritesJSONAndSkipsHealthChecks(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))

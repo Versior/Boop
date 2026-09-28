@@ -153,13 +153,17 @@ CREATE TABLE ai_cache (
 
 CREATE VIRTUAL TABLE post_search USING fts5(
   title,
-  body,
+  body_markdown,
   excerpt,
   content='posts',
   content_rowid='id',
   tokenize='unicode61'
 );
 ```
+
+> 外部内容表按 **列名** 映射内容表：`post_search` 的列名必须与 `posts` 的列名一致。列为
+> `body` 时 `MATCH` 仍可命中，但 `SELECT title, body FROM post_search` 与 `snippet()` 会报
+> `no such column: T.body`，故此处使用 `body_markdown`（已在 modernc.org/sqlite 上实测确认）。
 
 ## 约束与事务规则
 

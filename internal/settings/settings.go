@@ -8,6 +8,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
+	"time"
+	"unicode/utf8"
+)
+
+// Bounds enforced by Set so no caller can store a value that renders the site
+// useless or breaks Load later.
+const (
+	minPageSize         = 1
+	maxPageSize         = 50
+	minAuthorStatusTTL  = 1
+	maxAuthorStatusTTL  = 2160
+	maxSiteNameRunes    = 80
+	maxDescriptionRunes = 280
+	maxModelNameRunes   = 200
 )
 
 // Setting keys as stored in the settings table.
@@ -132,7 +148,8 @@ func Load(ctx context.Context, db *sql.DB) (Values, error) {
 	return values, nil
 }
 
-// Set stores one known key as JSON, inserting or replacing the row.
+// Set validates and stores one known key as JSON, inserting or replacing the
+// row. An invalid value is rejected before the database is touched.
 func Set(ctx context.Context, db *sql.DB, key string, value any) error {
 	if db == nil {
 		return errors.New("settings: set: nil database")
@@ -140,6 +157,9 @@ func Set(ctx context.Context, db *sql.DB, key string, value any) error {
 	var probe Values
 	if _, known := fieldsOf(&probe)[key]; !known {
 		return fmt.Errorf("settings: set: unknown key %q", key)
+	}
+	if err := validate(key, value); err != nil {
+		return err
 	}
 	raw, err := json.Marshal(value)
 	if err != nil {
@@ -150,6 +170,110 @@ func Set(ctx context.Context, db *sql.DB, key string, value any) error {
 		ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
 		key, string(raw)); err != nil {
 		return fmt.Errorf("settings: set: %s: %w", key, err)
+	}
+	return nil
+}
+
+// validate enforces the type and range of every known key. Values are checked
+// strictly: no string is parsed into a number and no truthy value is accepted
+// for a boolean, so a caller cannot store JSON that Load later rejects.
+func validate(key string, value any) error {
+	switch key {
+	case KeySiteName:
+		return validateText(key, value, 1, maxSiteNameRunes)
+	case KeySiteDescription:
+		return validateText(key, value, 0, maxDescriptionRunes)
+	case KeyAIChatModel, KeyAIEmbeddingModel:
+		return validateText(key, value, 0, maxModelNameRunes)
+	case KeySiteTimezone:
+		zone, err := requireString(key, value)
+		if err != nil {
+			return err
+		}
+		if zone == "" {
+			return fmt.Errorf("settings: set: %s must not be empty", key)
+		}
+		if _, err := time.LoadLocation(zone); err != nil {
+			return fmt.Errorf("settings: set: %s %q is not a known time zone", key, zone)
+		}
+		return nil
+	case KeyAIBaseURL:
+		base, err := requireString(key, value)
+		if err != nil {
+			return err
+		}
+		return validateBaseURL(key, base)
+	case KeyContentPageSize:
+		return validateInt(key, value, minPageSize, maxPageSize)
+	case KeyAIAuthorStatusTTLHours:
+		return validateInt(key, value, minAuthorStatusTTL, maxAuthorStatusTTL)
+	case KeyAuthRegistrationEnabled, KeyCommentsEnabled, KeyCommentsModerationEnabled, KeyAIEnabled:
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("settings: set: %s requires a bool, got %T", key, value)
+		}
+		return nil
+	default:
+		return fmt.Errorf("settings: set: unknown key %q", key)
+	}
+}
+
+func requireString(key string, value any) (string, error) {
+	s, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("settings: set: %s requires a string, got %T", key, value)
+	}
+	return s, nil
+}
+
+// validateText checks the type and rune length of a free-text setting;
+// minRunes > 0 additionally requires a non-blank value.
+func validateText(key string, value any, minRunes, maxRunes int) error {
+	s, err := requireString(key, value)
+	if err != nil {
+		return err
+	}
+	length := utf8.RuneCountInString(s)
+	if minRunes > 0 && strings.TrimSpace(s) == "" {
+		return fmt.Errorf("settings: set: %s must not be empty", key)
+	}
+	if length < minRunes || length > maxRunes {
+		return fmt.Errorf("settings: set: %s must be %d..%d characters, got %d", key, minRunes, maxRunes, length)
+	}
+	return nil
+}
+
+func validateInt(key string, value any, min, max int) error {
+	number, ok := value.(int)
+	if !ok {
+		return fmt.Errorf("settings: set: %s requires an int, got %T", key, value)
+	}
+	if number < min || number > max {
+		return fmt.Errorf("settings: set: %s must be between %d and %d, got %d", key, min, max, number)
+	}
+	return nil
+}
+
+// validateBaseURL accepts an empty value (AI disabled) or an absolute http(s)
+// endpoint with no credentials, query or fragment.
+func validateBaseURL(key, raw string) error {
+	if raw == "" {
+		return nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("settings: set: %s %q is not a URL", key, raw)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("settings: set: %s %q must use http or https", key, raw)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("settings: set: %s %q has no host", key, raw)
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("settings: set: %s must not contain credentials", key)
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("settings: set: %s must not contain a query or fragment", key)
 	}
 	return nil
 }

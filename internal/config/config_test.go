@@ -157,6 +157,8 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{"base url without host", map[string]string{"BOOP_BASE_URL": "https://"}, "BOOP_BASE_URL"},
 		{"base url with unsupported scheme", map[string]string{"BOOP_BASE_URL": "ftp://example.com"}, "BOOP_BASE_URL"},
 		{"base url with query", map[string]string{"BOOP_BASE_URL": "https://example.com/?a=1"}, "BOOP_BASE_URL"},
+		{"base url with credentials", map[string]string{"BOOP_BASE_URL": "https://user:pass@example.com"}, "BOOP_BASE_URL"},
+		{"base url with path", map[string]string{"BOOP_BASE_URL": "https://example.com/boop"}, "BOOP_BASE_URL"},
 		{"session secret too short", map[string]string{"BOOP_SESSION_SECRET": "short"}, "BOOP_SESSION_SECRET"},
 		{"master key not base64", map[string]string{"BOOP_MASTER_KEY": "!!!not-base64!!!"}, "BOOP_MASTER_KEY"},
 		{"master key wrong length", map[string]string{"BOOP_MASTER_KEY": shortMasterKey}, "BOOP_MASTER_KEY"},
@@ -186,5 +188,25 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		"BOOP_MASTER_KEY":     validMasterKey,
 	})); err != nil {
 		t.Fatalf("valid secret values rejected: %v", err)
+	}
+}
+
+func TestLoadAcceptsRootBaseURLs(t *testing.T) {
+	tests := map[string]string{
+		"no path":       "https://blog.example.com",
+		"root path":     "https://blog.example.com/",
+		"host and port": "http://127.0.0.1:8080",
+	}
+	for name, raw := range tests {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := load(envFrom(map[string]string{"BOOP_BASE_URL": raw}))
+			if err != nil {
+				t.Fatalf("load(%q): %v", raw, err)
+			}
+			want := strings.TrimSuffix(raw, "/")
+			if cfg.BaseURL != want {
+				t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, want)
+			}
+		})
 	}
 }

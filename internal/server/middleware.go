@@ -147,6 +147,13 @@ func (r *statusRecorder) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// Unwrap exposes the wrapped writer to http.ResponseController, so Flush,
+// Hijack and deadline methods still reach the real connection through the
+// middleware. Streaming responses (SSE) depend on it.
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
 func remoteHost(remoteAddr string) string {
 	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
 		return host
