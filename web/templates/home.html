@@ -1,6 +1,11 @@
 {{define "content"}}
     <h1 class="sr-only">{{.SiteName}} 首页</h1>
 
+    {{if .AIStatus.Text}}
+    <!-- 桌面右栏在窄屏隐藏，同一张作者状态卡在这里显示在快捷发布器之前 -->
+    <section class="status-mobile">{{template "authorStatus" .AIStatus}}</section>
+    {{end}}
+
     {{if .Composer}}
     <!-- 快捷发布器：仅站长登录时由服务端渲染，读者与游客 DOM 中不存在 -->
     <section class="composer" id="composer" data-composer aria-label="快捷发布" tabindex="-1">
@@ -42,6 +47,30 @@
             <button class="composer-post" data-composer-submit type="submit" disabled>发布</button>
           </div>
           <p class="composer-error" data-composer-error role="alert" hidden></p>
+
+          {{if .AIAssist}}
+          <!-- AI 助手：仅站长 + 文章模式可见；建议只在点“采用”后才写入草稿字段 -->
+          <div class="composer-ai" data-ai-assist hidden>
+            <div class="ai-bar" role="group" aria-label="AI 写作助手">
+              <span class="ai-label">
+                <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sparkle"/></svg>
+                AI 助手
+              </span>
+              <button class="ai-opt" type="button" data-ai-action="summary">摘要</button>
+              <button class="ai-opt" type="button" data-ai-action="tags">标签</button>
+              <button class="ai-opt" type="button" data-ai-action="seo">SEO</button>
+            </div>
+            <p class="ai-note" data-ai-status role="status" aria-live="polite"></p>
+            <p class="ai-error" data-ai-error role="alert" hidden></p>
+            <div class="ai-result" data-ai-result hidden>
+              <p class="ai-result-text" data-ai-result-text></p>
+              <div class="ai-result-actions">
+                <button class="ai-adopt" type="button" data-ai-adopt hidden>采用</button>
+                <button class="ai-copy" type="button" data-ai-copy hidden>复制</button>
+              </div>
+            </div>
+          </div>
+          {{end}}
         </div>
       </form>
       <noscript>

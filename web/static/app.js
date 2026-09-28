@@ -171,6 +171,8 @@
     /* 每次选择新文件都会递增：只有最新一次上传可以写 asset、提示、错误和
        uploading，旧请求返回时就无效了，不会覆盖新图片。 */
     var uploadGeneration = 0;
+    /* AI 助手只渲染建议；写不写进草稿由用户点“采用”决定。 */
+    var ai = wireAiAssist(composer, draftForAI);
 
     function currentMode(buttons) {
       for (var i = 0; i < buttons.length; i++) {
@@ -290,6 +292,7 @@
       if (tags) { tags.hidden = next === 'moment'; }
       if (excerpt) { excerpt.hidden = next !== 'article'; }
       if (drop) { drop.hidden = next !== 'photo'; }
+      if (ai) { ai.modeChanged(next); }
       sync();
     }
 
@@ -313,6 +316,18 @@
       }
       if (mode === 'photo' && asset) { body.asset_ids = [asset.id]; }
       return body;
+    }
+
+    /* 提交给 AI 助手的草稿：和发布用的是同一批字段，助手自己不碰这些输入框。 */
+    function draftForAI() {
+      return {
+        title: title ? title.value.trim() : '',
+        body: text.value.trim(),
+        excerpt: excerpt ? excerpt.value.trim() : '',
+        tags: tags
+          ? tags.value.split(',').map(function (item) { return item.trim(); }).filter(function (item) { return item; })
+          : []
+      };
     }
 
     modes.forEach(function (btn) {
@@ -391,6 +406,166 @@
     });
 
     applyMode(mode);
+  }
+
+  /* AI 写作助手：只在站长 + 文章模式的快捷发布器里渲染建议。
+     它从不直接写草稿：摘要与标签要用户点“采用”才填入，SEO 只提供复制。 */
+  function wireAiAssist(composer, currentDraft) {
+    var box = composer.querySelector('[data-ai-assist]');
+    if (!box) { return null; }
+
+    var note = box.querySelector('[data-ai-status]');
+    var errorBox = box.querySelector('[data-ai-error]');
+    var result = box.querySelector('[data-ai-result]');
+    var resultText = box.querySelector('[data-ai-result-text]');
+    var adopt = box.querySelector('[data-ai-adopt]');
+    var copy = box.querySelector('[data-ai-copy]');
+    var options = Array.prototype.slice.call(box.querySelectorAll('[data-ai-action]'));
+    var excerptField = composer.querySelector('[data-composer-excerpt]');
+    var tagsField = composer.querySelector('[data-composer-tags]');
+    var NAMES = { summary: '摘要', tags: '标签', seo: 'SEO' };
+    /* pending 是用户点“采用”时才会写入草稿的值；没有它，助手不能改任何输入框。 */
+    var pending = null;
+    var loading = false;
+
+    function setNote(message) {
+      if (note) { note.textContent = message; }
+    }
+
+    function setError(message) {
+      if (!errorBox) { return; }
+      errorBox.textContent = message || '';
+      errorBox.hidden = !message;
+    }
+
+    function clearResult() {
+      pending = null;
+      if (result) { result.hidden = true; }
+      if (resultText) { resultText.textContent = ''; }
+      if (adopt) { adopt.hidden = true; }
+      if (copy) { copy.hidden = true; }
+    }
+
+    function select(action) {
+      options.forEach(function (option) {
+        option.setAttribute('aria-pressed', option.getAttribute('data-ai-action') === action ? 'true' : 'false');
+      });
+    }
+
+    function setLoading(value) {
+      loading = value;
+      options.forEach(function (option) { option.disabled = value; });
+      if (adopt) { adopt.disabled = value; }
+      if (copy) { copy.disabled = value; }
+    }
+
+    function show(action, data) {
+      if (action === 'tags') {
+        var tags = data.tags || [];
+        if (!tags.length) { fail('AI 没有给出可用的标签建议。'); return; }
+        resultText.textContent = tags.join('，');
+        pending = { target: 'tags', value: tags.join(', ') };
+        adopt.textContent = '采用到标签';
+        adopt.hidden = false;
+      } else if (action === 'seo') {
+        var lines = [];
+        if (data.seo_title) { lines.push('标题：' + data.seo_title); }
+        if (data.seo_description) { lines.push('描述：' + data.seo_description); }
+        if (!lines.length) { fail('AI 没有给出可用的 SEO 建议。'); return; }
+        resultText.textContent = lines.join('\n');
+        copy.hidden = false;
+      } else {
+        if (!data.summary) { fail('AI 没有给出可用的摘要。'); return; }
+        resultText.textContent = data.summary;
+        pending = { target: 'excerpt', value: data.summary };
+        adopt.textContent = '采用到摘要';
+        adopt.hidden = false;
+      }
+      result.hidden = false;
+      setNote('建议已生成，点“采用”后才会写入草稿。');
+    }
+
+    function fail(message) {
+      setNote('');
+      clearResult();
+      setError(message);
+    }
+
+    function ask(action) {
+      if (loading) { return; }
+      setError('');
+      clearResult();
+      select(action);
+      var draft = currentDraft();
+      if (!draft.title && !draft.body && !draft.excerpt) {
+        fail('请先写下标题或正文，再让 AI 助手帮忙。');
+        return;
+      }
+      setLoading(true);
+      setNote('正在生成' + NAMES[action] + '…');
+      apiRequest('/api/v1/admin/ai/assist', 'POST', {
+        action: action, title: draft.title, body: draft.body, excerpt: draft.excerpt, tags: draft.tags
+      }).then(function (data) {
+        show(action, data || {});
+      }).catch(function (error) {
+        fail(error.message || 'AI 助手暂时不可用，请稍后再试。');
+      }).then(function () {
+        setLoading(false);
+      });
+    }
+
+    options.forEach(function (option) {
+      option.addEventListener('click', function () {
+        ask(option.getAttribute('data-ai-action'));
+      });
+    });
+
+    /* 采用是唯一的写入路径：用户明确点了按钮，才把建议填进对应字段。 */
+    if (adopt) {
+      adopt.addEventListener('click', function () {
+        if (!pending) { return; }
+        if (pending.target === 'excerpt' && excerptField) {
+          excerptField.value = pending.value;
+          setNote('已填入摘要，可以继续编辑。');
+          return;
+        }
+        if (pending.target === 'tags' && tagsField) {
+          tagsField.value = pending.value;
+          setNote('已填入标签，可以继续编辑。');
+          return;
+        }
+        setError('对应的编辑框当前不可用，请切换到文章模式后重试。');
+      });
+    }
+
+    if (copy) {
+      copy.addEventListener('click', function () {
+        var text = resultText ? resultText.textContent : '';
+        if (!text) { return; }
+        if (!navigator.clipboard || !navigator.clipboard.writeText) {
+          setError('当前浏览器不支持自动复制，请手动选择文本复制。');
+          return;
+        }
+        navigator.clipboard.writeText(text).then(function () {
+          setNote('已复制到剪贴板。');
+        }).catch(function () {
+          setError('复制失败，请手动选择文本复制。');
+        });
+      });
+    }
+
+    return {
+      modeChanged: function (mode) {
+        var article = mode === 'article';
+        box.hidden = !article;
+        if (!article) {
+          setError('');
+          setNote('');
+          clearResult();
+          select('');
+        }
+      }
+    };
   }
 
   /* 互动：点赞、收藏、评论、回复、删除与站长审核。全部走真实接口，不复制模板。 */

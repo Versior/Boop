@@ -29,10 +29,9 @@ const (
 	commentRefill   = 12 * time.Second
 	commentIPBurst  = 30
 	commentIPRefill = 2 * time.Second
-	// aiBurst and aiRefill are the reserved budget for the AI endpoints of
-	// Task 8 (three immediate calls, then one every twenty seconds). Nothing
-	// calls them yet: the AI routes do not exist, and this package does not
-	// pre-create an unused limiter for them.
+	// ai is the reserved AI budget of Task 8: three immediate owner calls, then
+	// one every twenty seconds. It gates the three owner-only AI routes; the
+	// public author status endpoint is a cache read and consumes no budget.
 	aiBurst  = 3
 	aiRefill = 20 * time.Second
 	// oauth: ten GitHub callbacks per address, then one every six seconds. Every
@@ -138,6 +137,7 @@ type limiters struct {
 	comment   *limiter
 	commentIP *limiter
 	oauth     *limiter
+	ai        *limiter
 }
 
 func newLimiters(now func() time.Time) *limiters {
@@ -147,6 +147,7 @@ func newLimiters(now func() time.Time) *limiters {
 		comment:   newLimiter(commentBurst, commentRefill, now),
 		commentIP: newLimiter(commentIPBurst, commentIPRefill, now),
 		oauth:     newLimiter(oauthBurst, oauthRefill, now),
+		ai:        newLimiter(aiBurst, aiRefill, now),
 	}
 }
 

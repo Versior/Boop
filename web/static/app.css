@@ -385,6 +385,68 @@ button.action:disabled{opacity:.6;cursor:default}
   line-height:1.6;
 }
 
+/* ---------- 7.2.1 AI 作者状态（右栏与移动端共用） ---------- */
+.ai-status{
+  padding:14px;
+  border:1px solid var(--line-strong);border-radius:var(--r-lg);
+}
+.ai-status-title{
+  display:flex;align-items:center;gap:7px;
+  font-size:14px;font-weight:800;letter-spacing:-.01em;
+}
+.ai-status-title .ic{width:15px;height:15px;color:var(--accent)}
+.ai-status-text{margin-top:8px;color:var(--ink);font-size:14px;line-height:1.65;word-break:break-word}
+.ai-status-topics{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 0;padding:0;list-style:none}
+.ai-status-meta{margin-top:10px;color:var(--muted-2);font-size:12px;line-height:1.5}
+/* 右栏在 1239px 以下隐藏，届时由首页顶部的同一张卡片接管 */
+.status-mobile{display:none}
+
+/* ---------- 7.2.2 AI 写作助手（仅站长 + 文章模式） ---------- */
+.composer-ai{margin-top:10px;padding-top:9px;border-top:1px solid var(--line)}
+.ai-bar{display:flex;align-items:center;flex-wrap:wrap;gap:4px}
+.ai-label{
+  display:inline-flex;align-items:center;gap:6px;margin-right:4px;
+  color:var(--muted);font-size:12px;font-weight:700;
+}
+.ai-label .ic{width:15px;height:15px;color:var(--accent)}
+.ai-opt{
+  height:28px;padding:0 12px;
+  border:1px solid var(--line-strong);border-radius:999px;
+  color:var(--muted);font-size:13px;font-weight:600;
+  transition:background .12s ease,border-color .12s ease,color .12s ease;
+}
+.ai-opt:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.ai-opt[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:700}
+.ai-opt:disabled{opacity:.5;cursor:default}
+.ai-note{margin:8px 0 0;color:var(--muted-2);font-size:12px;line-height:1.6}
+.ai-error{
+  margin:8px 0 0;padding:8px 10px;
+  border:1px solid var(--danger);border-radius:12px;
+  color:var(--danger);font-size:13px;line-height:1.6;
+}
+.ai-result{
+  margin-top:8px;padding:10px 12px;
+  border:1px solid var(--line);border-radius:var(--r-md);
+  background:var(--bg-soft);
+}
+.ai-result-text{
+  color:var(--ink);font-size:14px;line-height:1.62;
+  white-space:pre-wrap;word-break:break-word;
+}
+.ai-result-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:9px}
+.ai-adopt{
+  display:inline-flex;align-items:center;height:30px;padding:0 14px;border-radius:999px;
+  background:var(--accent);color:var(--on-accent);
+  font-size:13px;font-weight:700;
+}
+.ai-adopt:hover{opacity:.9}
+.ai-copy{
+  display:inline-flex;align-items:center;height:30px;padding:0 14px;
+  border:1px solid var(--line-strong);border-radius:999px;
+  color:var(--ink);font-size:13px;font-weight:600;
+}
+.ai-copy:hover{border-color:var(--accent);color:var(--accent)}
+
 /* ---------- 7.3 详情页 ---------- */
 .post-detail{border-bottom:0}
 .detail-title{
@@ -654,6 +716,8 @@ button.action:disabled{opacity:.6;cursor:default}
   }
 
   .rail-right{display:none}
+
+  .status-mobile{display:block;padding:14px var(--pad) 16px;border-bottom:1px solid var(--line)}
 }
 
 @media (max-width:700px){

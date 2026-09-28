@@ -12,7 +12,7 @@
 | GET | `/api/v1/posts/{slug}` | 内容详情、点赞数、评论数和当前用户状态 |
 | GET | `/api/v1/posts/{slug}/comments` | 仅已批准评论，按时间正序嵌套一级回复 |
 | GET | `/api/v1/search?q=&cursor=` | SQLite FTS 搜索 |
-| GET | `/api/v1/ai/author-status` | 返回缓存状态、generated_at、stale 标志 |
+| GET | `/api/v1/ai/author-status` | 作者状态缓存：text、topics、generated_at、stale、default；只读缓存，不同步调用模型 |
 | GET | `/feed.xml` | RSS 2.0 |
 
 ## 认证
@@ -46,13 +46,14 @@ GitHub 登录规则：
 | 评论 | 登录用户 | 5 | 每 12 秒 1 次 |
 | 评论 | 客户端地址 | 30 | 每 2 秒 1 次 |
 | GitHub 登录（start 与 callback 各自计数） | 客户端地址 | 10 | 每 6 秒 1 次 |
+| AI（test / regenerate / assist） | 站长账号、客户端地址 | 3 | 每 20 秒 1 次 |
 
 - 超限返回 429，响应头带 `Retry-After`（秒），响应体为 `{"error":{"code":"rate_limited","message":"请求过于频繁，请稍后再试"},"request_id":"...","retry_after":N}`。
 - 一次请求按调用方给定的顺序逐个消耗键，**第一个超限的键就立即返回 429**，不再消耗或创建其后的键。因此已被封禁的地址无法用不断更换的邮箱持续扩张内存，反向地，同一邮箱换地址刷也仍会被邮箱桶拦住。
 - 限额保存在进程内存，重启即清空；**同一时刻只支持一个进程**，多进程部署会使实际额度成倍。避免 key 无限增长：每次请求前检查是否距上次清理已满 1 分钟（`sweepEvery`），满 1 分钟才做一次真正的清理，清掉已回满或超过 10 分钟（`idleTTL`）未使用的桶。因此清理是“请求驱动”的，不是独立定时器。
 - 邮箱键是**归一化（去空格、转小写）后的邮箱的 SHA-256**，定长且不保存邮箱明文：未验证的输入无法通过超长邮箱放大内存。
 - 地址取连接对端（`RemoteAddr`），不信任可伪造的转发头；除非反向代理把真实客户端地址作为对端地址传入，否则限速按代理地址聚合。
-- AI 接口（Task 8 未实现）预留额度：突发 3、每 20 秒 1 次；目前没有任何路由使用它。
+- AI 的三个站长接口（`/api/v1/admin/ai/test`、`/api/v1/admin/ai/author-status/regenerate`、`/api/v1/admin/ai/assist`）按**站长账号 + 客户端地址**计数：先消耗账号键，账号超额时不会创建或消耗其后的地址键。公开的 `GET /api/v1/ai/author-status` 只读缓存，不消耗 AI 额度。
 
 ## 互动
 
@@ -111,9 +112,9 @@ GitHub 登录规则：
 |---|---|---|
 | GET | `/api/v1/admin/settings` | 返回非密钥设置及密钥是否已配置 |
 | PATCH | `/api/v1/admin/settings` | 白名单字段更新；空密钥表示保持不变，显式 `clear_secret` 才删除 |
-| POST | `/api/v1/admin/ai/test` | 最小请求验证配置，不回显密钥（Task 8，未实现） |
-| POST | `/api/v1/admin/ai/author-status/regenerate` | 手动刷新作者状态，单飞（Task 8，未实现） |
-| POST | `/api/v1/admin/ai/assist` | action=summary/tags/seo，输入草稿内容（Task 8，未实现） |
+| POST | `/api/v1/admin/ai/test` | 最小请求验证配置，成功只返回 ok 与配置的模型名，不回显密钥或模型输出 |
+| POST | `/api/v1/admin/ai/author-status/regenerate` | 手动刷新作者状态；同一时刻只能有一个刷新在跑，重复请求 409 `ai_busy` |
+| POST | `/api/v1/admin/ai/assist` | action=summary/tags/seo，输入草稿内容；只返回建议，不写入草稿 |
 | POST | `/api/v1/admin/ai/chat` | v0.2 站内问答，SSE 输出（未实现） |
 
 设置接口规则：
@@ -128,6 +129,21 @@ GitHub 登录规则：
 - 写入或替换密钥需要 `BOOP_MASTER_KEY`，未配置时返回 409 `master_key_required`（非密钥字段仍可修改）；**删除密钥只是删一行，不需要解密，因此在没有 `BOOP_MASTER_KEY` 时也能幂等清除**。同一次请求里既有新密钥又有 `clear_secret` 时按“写入”处理，整单 409。
 - 设置请求体上限为 64KiB，超限返回 413 `payload_too_large`。
 - 设置表损坏时 `GET` 与设置页返回 500，而不是用默认值渲染表单（避免把默认值保存回去覆盖真实设置）。
+
+AI 接口规则：
+
+- 三个站长接口都只允许 owner 并要求 CSRF：游客 401 `unauthorized`，读者 403 `forbidden`，缺少 `X-CSRF-Token` 403 `csrf_invalid`，超限 429。
+- `GET /api/v1/ai/author-status` 是公开接口，返回 `{"data":{"text":"...","topics":["..."],"generated_at":"...","stale":false,"default":false}}`。`text` 是不超过 280 字的纯文本；`topics` 最多 5 个、每个不超过 24 字，可以为空；`default=true` 表示这是手写兑底文案（还没有生成结果）；`stale=true` 表示缓存已过期（可能还有内容更新待处理）。该接口只读缓存，**不在请求内调用模型**。
+- 缓存是 `ai_cache` 中唯一一行 `cache_key='author_status'`，值形如 `{"text":"...","topics":["..."]}`；`source_updated_at` 是生成时最新已发布内容的 `updated_at`，`expires_at` 由 `ai.author_status_ttl_hours`（默认 168 小时）决定。
+- 访问首页或该接口时的读取顺序：缓存仍新鲜则直接返回；缓存过期但**没有**比 `source_updated_at` 更新的已发布内容（或站点还没有已发布内容）时复用旧值且不调用模型；缓存过期且存在更新内容时立即返回旧值并在后台单飞刷新；完全没有缓存时立即返回手写兑底文案，并在有已发布内容时后台刷新。
+- 刷新永不阻塞首页渲染：它从请求上下文分离，但有 30 秒上限；全进程同一时刻只允许一个刷新（单飞），并发访问不会重复生成。
+- `POST /api/v1/admin/ai/author-status/regenerate` 是站长显式刷新，成功返回与公开接口相同的 `data`。已有刷新在跑时返回 409 `ai_busy`，不会启动第二个调用；站点从未发布内容时返回 409 `ai_no_content`。
+- 刷新失败保留旧值（或兑底文案），只在 `ai_cache.last_error` 写入一个稳定短码（`timeout`、`upstream`、`invalid_reply` 等）。日志只记录短码与上游状态码，**绝不记录 API Key、提示词、模型输出或上游响应体**；非 2xx、超时与响应超限都返回短而稳定的错误码。
+- `POST /api/v1/admin/ai/assist` 只接受 `action=summary|tags|seo` 与 `title`、`body`、`excerpt`、`tags` 四个草稿字段，未知字段一律 400 `invalid_body`（因此请求无法指向任何已保存内容）。标题、正文、摘要与标签全为空，或总字节数超过 16KiB，会在调用模型之前返回 400 `invalid_body`；未知 `action` 返回 400 `invalid_action`。
+- 助手响应分别为 `{"data":{"action":"summary","summary":"..."}}`、`{"data":{"action":"tags","tags":["..."]}}` 与 `{"data":{"action":"seo","seo_title":"...","seo_description":"..."}}`；上限是摘要 300 字、标签 8 个且每个 30 字（大小写不敏感去重）、SEO 标题 160 字、描述 300 字。**建议不会写入草稿**：只有站长在前端点“采用”时才会填入摘要或标签，SEO 只提供复制。
+- `POST /api/v1/admin/ai/test` 只做一次最小对话请求，成功返回 `{"data":{"ok":true,"model":"<配置的模型名>"}}`，不回显模型输出或任何密钥。
+- 模型回复必须是**一个**严格 JSON 对象：未知字段与尾随 JSON 一律按无法解析处理。失败码映射：未启用 409 `ai_disabled`，缺少 Base URL、模型或 API Key（含缺少 `BOOP_MASTER_KEY`）409 `ai_unconfigured`，超时 504 `ai_timeout`，非 2xx 502 `ai_upstream_error`，无法解析（含响应体超过 1MiB）502 `ai_invalid_reply`。AI 不可用时首页与缓存状态仍然可用。
+- AI 调用边界：单次 20 秒超时、单个响应最多 1MiB、提示词最多 48KiB，且全进程同时最多 2 个上游调用（适配 1 核 / 512MiB）。设置与密钥在每次调用时重新读取并解密，改动无需重启。
 
 ## HTML 页面
 

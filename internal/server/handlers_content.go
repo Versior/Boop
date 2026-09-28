@@ -137,6 +137,10 @@ type feedView struct {
 	OwnerName    string
 	OwnerAvatar  string
 	ComposerMode string
+	// AIAssist renders the writing assistant inside the composer. It is true only
+	// for the owner and only when the AI service is actually usable, so no owner
+	// ever gets a control that can only fail.
+	AIAssist bool
 }
 
 // postPageView drives the detail page.
@@ -210,7 +214,11 @@ func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
 	}
 	if viewer.owner {
 		view.Composer = true
+		view.AIAssist = s.aiAvailable(r.Context(), values)
 	}
+	// The author status card belongs to the home page only: every other page
+	// leaves the shared field zero, so no other render path touches the AI cache.
+	view.AIStatus = authorStatusPayloadOf(s.authorStatus(r.Context(), values))
 	s.render(w, r, http.StatusOK, "home", view)
 }
 

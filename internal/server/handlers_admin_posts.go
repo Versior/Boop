@@ -147,10 +147,13 @@ func (s *server) postIDFrom(w http.ResponseWriter, r *http.Request) (int64, bool
 // adminRouteMethods documents the owner-only endpoint methods so a mismatch is
 // answered as JSON with an Allow header instead of ServeMux plain text.
 var adminRouteMethods = map[string]string{
-	"/api/v1/admin/posts":    http.MethodPost,
-	"/api/v1/admin/uploads":  http.MethodPost,
-	"/api/v1/admin/comments": http.MethodGet,
-	"/api/v1/admin/settings": http.MethodGet + ", " + http.MethodPatch,
+	"/api/v1/admin/posts":                       http.MethodPost,
+	"/api/v1/admin/uploads":                     http.MethodPost,
+	"/api/v1/admin/comments":                    http.MethodGet,
+	"/api/v1/admin/settings":                    http.MethodGet + ", " + http.MethodPatch,
+	"/api/v1/admin/ai/test":                     http.MethodPost,
+	"/api/v1/admin/ai/author-status/regenerate": http.MethodPost,
+	"/api/v1/admin/ai/assist":                   http.MethodPost,
 }
 
 // handleAdminFallback keeps every /api/v1/admin answer JSON.

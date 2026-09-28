@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"boop/internal/ai"
 	"boop/internal/auth"
 	"boop/internal/config"
 	"boop/internal/secretbox"
@@ -45,6 +46,9 @@ type server struct {
 	// point the flow at a local server.
 	github      auth.GitHubAPI
 	oauthStates *oauthStates
+	// aiRefresh is the process-local single-flight guard of the author status
+	// refresh, so concurrent home visits never duplicate generation.
+	aiRefresh ai.Guard
 }
 
 // New builds the Boop HTTP handler. It panics only when the embedded templates
@@ -112,6 +116,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /admin/comments", s.handleAdminCommentsPage)
 	mux.HandleFunc("GET /auth/github/start", s.handleGitHubStart)
 	mux.HandleFunc("GET /auth/github/callback", s.handleGitHubCallback)
+	mux.HandleFunc("GET /api/v1/ai/author-status", s.handleAuthorStatusAPI)
+	mux.HandleFunc("/api/v1/ai/", s.handleAIFallback)
+	mux.HandleFunc("POST /api/v1/admin/ai/test", s.handleAITestAPI)
+	mux.HandleFunc("POST /api/v1/admin/ai/author-status/regenerate", s.handleAIRegenerateAPI)
+	mux.HandleFunc("POST /api/v1/admin/ai/assist", s.handleAIAssistAPI)
 	mux.HandleFunc("GET /api/v1/admin/settings", s.handleAdminSettingsAPI)
 	mux.HandleFunc("PATCH /api/v1/admin/settings", s.handlePatchSettingsAPI)
 	mux.HandleFunc("GET /api/v1/posts", s.handlePostsAPI)
@@ -172,6 +181,10 @@ type pageView struct {
 	SiteName        string
 	SiteDescription string
 	SiteAvatarURL   string
+	// AIStatus is the author status card of the home right rail. It stays zero on
+	// every other page, so the shared shell renders no card outside the home page
+	// and no other page ever reads the AI cache.
+	AIStatus authorStatusPayload
 }
 
 // shellView builds the shell state of a page for the current request: the

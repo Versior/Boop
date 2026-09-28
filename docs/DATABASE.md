@@ -179,6 +179,7 @@ CREATE VIRTUAL TABLE post_search USING fts5(
 - 点赞、收藏使用 `INSERT ... ON CONFLICT DO NOTHING` 与 `DELETE`，响应返回最终状态和计数。收藏是私有的：返回的计数是当前用户自己的收藏总数。
 - 删除或拒绝父评论后，其回复仍是 `approved` 数据，但公开列表不会展示孤儿回复（写作时判定的可见性以父评论为准）。
 - FTS 索引由 posts 的 insert/update/delete 触发器同步；软删除内容不得进入搜索结果。
+- `ai_cache` 是生成结果的单行缓存：作者状态使用 `cache_key='author_status'`，`value_json` 形如 `{"text":"...","topics":["..."]}`（纯文本，最多 280 字与 5 个主题词）。`source_updated_at` 原样保存生成时最新已发布内容的 `updated_at`（与 `posts.updated_at` 做字符串比较，与公开信息流游标使用的是同一套存储格式），`expires_at` 由 `ai.author_status_ttl_hours` 计算；`last_error` 只保存稳定的失败短码（如 `timeout`、`upstream`、`invalid_reply`），**不保存提示词、密钥、模型输出或上游响应体**。刷新失败时不新增、不覆盖已有行，只更新 `last_error`；没有缓存行时前端渲染手写兑底文案，不为此写入一行。
 - 迁移文件一经发布不可修改，只能追加新版本。
 
 ## 默认设置
