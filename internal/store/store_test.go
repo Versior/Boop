@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -182,6 +183,35 @@ func TestMigrateIsIdempotentAcrossRestarts(t *testing.T) {
 	}
 	if users != 1 {
 		t.Errorf("users = %d, want the surviving row", users)
+	}
+}
+
+func TestIsUniqueViolation(t *testing.T) {
+	db := migratedDB(t)
+	ctx := context.Background()
+	stamp := time.Now().UTC().Format(time.RFC3339)
+	insert := `INSERT INTO users(email, display_name, role, created_at, updated_at) VALUES(?, '甲', 'reader', ?, ?)`
+	if _, err := db.ExecContext(ctx, insert, "dup@example.com", stamp, stamp); err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+	_, err := db.ExecContext(ctx, insert, "dup@example.com", stamp, stamp)
+	if err == nil {
+		t.Fatal("duplicate insert succeeded")
+	}
+	if !IsUniqueViolation(err) {
+		t.Errorf("IsUniqueViolation(%v) = false, want true", err)
+	}
+	if IsUniqueViolation(errors.New("not a driver error")) {
+		t.Error("IsUniqueViolation accepted an unrelated error")
+	}
+
+	// A CHECK violation is a constraint failure but not a UNIQUE one.
+	_, err = db.ExecContext(ctx, `INSERT INTO posts(slug, type, created_at, updated_at) VALUES('bad-type', 'video', ?, ?)`, stamp, stamp)
+	if err == nil {
+		t.Fatal("inserting an unsupported post type succeeded")
+	}
+	if IsUniqueViolation(err) {
+		t.Error("IsUniqueViolation accepted a CHECK violation")
 	}
 }
 

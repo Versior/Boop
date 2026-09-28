@@ -57,7 +57,7 @@ func newServer(cfg config.Config, db *sql.DB, logger *slog.Logger) (*server, err
 // parsePages builds one isolated template set per page so pages cannot leak
 // definitions into each other.
 func parsePages() (map[string]*template.Template, error) {
-	names := []string{"home"}
+	names := []string{"home", "login", "register"}
 	pages := make(map[string]*template.Template, len(names))
 	for _, name := range names {
 		tmpl, err := template.New(name).ParseFS(web.FS, "templates/base.html", "templates/"+name+".html")
@@ -74,10 +74,19 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /{$}", s.handleHome)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
+	mux.HandleFunc("GET /login", s.handleLoginPage)
+	mux.HandleFunc("GET /register", s.handleRegisterPage)
+	mux.HandleFunc("POST /api/v1/auth/register", s.handleRegisterAPI)
+	mux.HandleFunc("POST /api/v1/auth/login", s.handleLoginAPI)
+	mux.HandleFunc("POST /api/v1/auth/logout", s.handleLogoutAPI)
+	mux.HandleFunc("GET /api/v1/auth/me", s.handleMeAPI)
+	mux.HandleFunc("/api/v1/auth/", s.handleAuthFallback)
 	mux.HandleFunc("GET /static/", s.handleStatic)
 	mux.HandleFunc("/", s.handleNotFound)
 
 	var handler http.Handler = mux
+	handler = s.guardUnsafeMethods(handler)
+	handler = s.authenticate(handler)
 	handler = limitBody(handler, s.cfg.MaxUploadBytes())
 	handler = recoverPanic(handler, s.logger)
 	handler = accessLog(handler, s.logger)
@@ -85,10 +94,27 @@ func (s *server) handler() http.Handler {
 	return withRequestID(handler)
 }
 
+// pageView is the shell state every page provides; base.html reads .Filter to
+// mark the current navigation item and .CSRFToken for authenticated writes.
+type pageView struct {
+	Filter    string
+	CSRFToken string
+}
+
+// shellView builds the shell state of a page for the current request: the
+// navigation filter plus the session CSRF token when the visitor is signed in.
+func (s *server) shellView(r *http.Request, filter string) pageView {
+	view := pageView{Filter: filter}
+	if state, ok := authStateFrom(r.Context()); ok && state.authenticated {
+		view.CSRFToken = state.session.CSRFToken
+	}
+	return view
+}
+
 // homeView is the server-rendered state of the shell. Feed content arrives with
 // the publishing module; the filter already drives navigation state.
 type homeView struct {
-	Filter string
+	pageView
 }
 
 func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +125,7 @@ func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, r, http.StatusBadRequest, "invalid_type", "该内容筛选类型不存在")
 		return
 	}
-	s.render(w, r, http.StatusOK, "home", homeView{Filter: filter})
+	s.render(w, r, http.StatusOK, "home", homeView{pageView: s.shellView(r, filter)})
 }
 
 // handleHealthz reports process liveness and never touches external systems.

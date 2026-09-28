@@ -1,0 +1,20 @@
+{{define "content"}}
+<section class="auth">
+  <h1 class="auth-title">登录 Boop</h1>
+  <p class="auth-hint">用邮箱和密码登录。没有账号？<a href="/register">注册读者账号</a>。</p>
+
+  <form class="auth-form" action="/api/v1/auth/login" method="post" data-auth-form data-auth-success="/">
+    <label class="auth-field">
+      <span>邮箱</span>
+      <input name="email" type="email" autocomplete="username" required maxlength="254">
+    </label>
+    <label class="auth-field">
+      <span>密码</span>
+      <input name="password" type="password" autocomplete="current-password" required minlength="10" maxlength="72">
+    </label>
+    <p class="auth-error" role="alert" data-auth-error hidden></p>
+    <button class="auth-submit" type="submit">登录</button>
+    <noscript><p class="auth-note">登录需要 JavaScript：本页会把邮箱和密码以 JSON 提交到站点接口。</p></noscript>
+  </form>
+</section>
+{{end}}

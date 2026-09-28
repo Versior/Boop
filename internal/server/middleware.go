@@ -15,7 +15,10 @@ import (
 
 type contextKey int
 
-const requestIDContextKey contextKey = iota
+const (
+	requestIDContextKey contextKey = iota
+	authContextKey
+)
 
 // contentSecurityPolicy allows only same-origin assets: templates and scripts
 // must never need inline code, so no nonce or unsafe-inline escape hatch exists.

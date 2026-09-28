@@ -1,14 +1,18 @@
 // Command boop runs the single-process Boop blog: SSR pages, embedded assets
-// and the JSON API on one HTTP listener.
+// and the JSON API on one HTTP listener. It also owns the one-time owner
+// bootstrap command.
 package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,14 +23,64 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	var err error
+	switch commandName(os.Args) {
+	case "serve":
+		err = runServer()
+	case "init-owner":
+		err = runInitOwner(os.Args[2:], os.Stdout, promptHiddenPassword)
+	default:
+		err = fmt.Errorf("未知命令 %q，可用命令：serve（默认）、init-owner", os.Args[1])
+	}
+	if err != nil {
 		logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 		logger.Error("boop exited with an error", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
 }
 
-func run() error {
+// commandName reads the subcommand, defaulting to serve so an argument-free
+// start (and flag-only invocations) keep working.
+func commandName(args []string) string {
+	if len(args) < 2 || strings.HasPrefix(args[1], "-") {
+		return "serve"
+	}
+	return args[1]
+}
+
+// openMigratedStore opens the configured database and applies every pending
+// migration, so both commands always work against the current schema.
+func openMigratedStore(cfg config.Config, logger *slog.Logger) (*sql.DB, error) {
+	db, err := store.Open(cfg.DatabasePath())
+	if err != nil {
+		return nil, err
+	}
+	if err := store.Migrate(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	logger.Info("database ready",
+		slog.String("path", cfg.DatabasePath()),
+		slog.Int("schema_version", store.LatestVersion()),
+	)
+	return db, nil
+}
+
+// openStore is the command-side helper: load the configuration, then open the
+// migrated database.
+func openStore(logger *slog.Logger) (config.Config, *sql.DB, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return config.Config{}, nil, err
+	}
+	db, err := openMigratedStore(cfg, logger)
+	if err != nil {
+		return config.Config{}, nil, err
+	}
+	return cfg, db, nil
+}
+
+func runServer() error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -35,27 +89,18 @@ func run() error {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.SlogLevel()}))
 	slog.SetDefault(logger)
 
-	db, err := store.Open(cfg.DatabasePath())
+	db, err := openMigratedStore(cfg, logger)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	if err := store.Migrate(db); err != nil {
-		return err
-	}
 	if err := settings.Seed(context.Background(), db); err != nil {
 		return err
 	}
-	logger.Info("database ready",
-		slog.String("path", cfg.DatabasePath()),
-		slog.Int("schema_version", store.LatestVersion()),
-	)
-
-	handler := server.New(cfg, db)
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           handler,
+		Handler:           server.New(cfg, db),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,

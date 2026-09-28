@@ -1,0 +1,29 @@
+{{define "content"}}
+<section class="auth">
+  <h1 class="auth-title">注册读者账号</h1>
+  {{if .RegistrationEnabled}}
+  <p class="auth-hint">注册后可以评论、回复、点赞和收藏。已经有账号？<a href="/login">去登录</a>。</p>
+
+  <form class="auth-form" action="/api/v1/auth/register" method="post" data-auth-form data-auth-success="/">
+    <label class="auth-field">
+      <span>昵称</span>
+      <input name="display_name" type="text" autocomplete="nickname" required maxlength="60">
+    </label>
+    <label class="auth-field">
+      <span>邮箱</span>
+      <input name="email" type="email" autocomplete="username" required maxlength="254">
+    </label>
+    <label class="auth-field">
+      <span>密码</span>
+      <input name="password" type="password" autocomplete="new-password" required minlength="10" maxlength="72">
+    </label>
+    <p class="auth-help">密码长度为 10 到 72 字节。</p>
+    <p class="auth-error" role="alert" data-auth-error hidden></p>
+    <button class="auth-submit" type="submit">注册并登录</button>
+    <noscript><p class="auth-note">注册需要 JavaScript：本页会把昵称、邮箱和密码以 JSON 提交到站点接口。</p></noscript>
+  </form>
+  {{else}}
+  <p class="auth-hint">站点当前已关闭公开注册。已有账号可以<a href="/login">直接登录</a>。</p>
+  {{end}}
+</section>
+{{end}}
