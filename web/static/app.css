@@ -1,0 +1,279 @@
+/* ============================================================
+   Boop · 视觉移植自 boop-x-native-v7.html（只保留当前 shell 使用的部分）
+   ============================================================ */
+
+/* ---------- 1. 设计令牌 ---------- */
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html{-webkit-text-size-adjust:100%}
+
+:root{
+  color-scheme:light;
+  --bg:#ffffff;
+  --bg-blur:rgba(255,255,255,.86);
+  --bg-soft:#f7f9f9;
+  --hover:rgba(15,20,25,.035);
+  --hover-strong:rgba(15,20,25,.06);
+  --line:#eff3f4;
+  --line-strong:#e1e8eb;
+  --ink:#0f1419;
+  --muted:#536471;
+  --muted-2:#8b98a5;
+  --accent:#1d9bf0;
+  --accent-soft:rgba(29,155,240,.1);
+  --chip:#eff3f4;
+  --mark-bg:#0f1419;
+  --mark-fg:#ffffff;
+  --r-lg:16px;
+  --r-md:14px;
+
+  /* 三栏栅格：左栏 248 / 主流 600 / 右栏 336 */
+  --rail-w:248px;
+  --main-w:600px;
+  --aside-w:336px;
+  --rail-icon-w:68px;
+  --pad:16px;
+}
+[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#000000;
+  --bg-blur:rgba(0,0,0,.78);
+  --bg-soft:#16181c;
+  --hover:rgba(255,255,255,.035);
+  --hover-strong:rgba(255,255,255,.07);
+  --line:#2f3336;
+  --line-strong:#3b4045;
+  --ink:#e7e9ea;
+  --muted:#71767b;
+  --muted-2:#5b6065;
+  --accent:#1d9bf0;
+  --accent-soft:rgba(29,155,240,.16);
+  --chip:#202327;
+  --mark-bg:#e7e9ea;
+  --mark-fg:#0b0d0e;
+}
+
+/* ---------- 2. 基础 ---------- */
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  font-size:15px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+a{color:inherit;text-decoration:none}
+h1,h2,h3,p{margin:0}
+.sprite{position:absolute;width:0;height:0;overflow:hidden}
+.sr-only{
+  position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0;
+}
+:where(a,button,input):focus-visible{
+  outline:2px solid var(--accent);
+  outline-offset:2px;
+}
+
+/* ---------- 3. 图标体系 ---------- */
+.ic{
+  display:block;
+  width:18px;height:18px;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.8;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+  flex:0 0 auto;
+}
+.ic-nav{width:22px;height:22px}
+.ic-logo{width:24px;height:24px}
+
+[data-theme-toggle] .ic-sun{display:none}
+[data-theme="dark"] [data-theme-toggle] .ic-moon{display:none}
+[data-theme="dark"] [data-theme-toggle] .ic-sun{display:block}
+
+/* ---------- 4. 三栏骨架 ---------- */
+.app{
+  display:grid;
+  grid-template-columns:var(--rail-w) var(--main-w) var(--aside-w);
+  justify-content:center;
+  align-items:start;
+  margin:0 auto;
+}
+.rail-left{
+  position:sticky;top:0;
+  height:100vh;height:100dvh;
+  display:flex;flex-direction:column;justify-content:space-between;
+  gap:16px;
+  padding:14px 16px 16px 0;
+  border-right:1px solid var(--line);
+}
+.rail-right{
+  position:sticky;top:0;
+  display:flex;flex-direction:column;gap:14px;
+  max-height:100vh;max-height:100dvh;
+  padding:14px 0 24px 28px;
+  border-left:1px solid var(--line);
+}
+.main{min-width:0;min-height:100vh;min-height:100dvh}
+
+/* ---------- 5. 左栏 ---------- */
+.brand{
+  display:flex;align-items:center;gap:10px;
+  height:44px;padding:0 12px;
+  margin-bottom:6px;
+  border-radius:999px;
+  transition:background .12s ease;
+}
+.brand:hover{background:var(--hover)}
+.brandmark{
+  display:grid;place-items:center;
+  width:36px;height:36px;flex:0 0 36px;
+  border-radius:11px;
+  background:var(--mark-bg);color:var(--mark-fg);
+}
+.brand-name{font-size:19px;font-weight:800;letter-spacing:-.02em}
+
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav-item{
+  display:flex;align-items:center;gap:14px;
+  height:48px;padding:0 12px;border-radius:999px;
+  font-size:15px;font-weight:500;color:var(--ink);
+  transition:background .12s ease;
+}
+.nav-item:hover{background:var(--hover)}
+.nav-item.on{font-weight:700}
+.nav-item.on .ic{stroke-width:2.2}
+.nav-item .label{white-space:nowrap}
+
+/* ---------- 6. 移动端顶栏 ---------- */
+.icon-btn{
+  display:grid;place-items:center;
+  width:36px;height:36px;border-radius:50%;
+  color:var(--muted);
+  transition:background .12s ease,color .12s ease;
+}
+.icon-btn:hover{background:var(--hover-strong);color:var(--ink)}
+
+.topbar{
+  display:none;
+  position:sticky;top:0;z-index:20;
+  background:var(--bg-blur);
+  -webkit-backdrop-filter:blur(14px);
+  backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--line);
+}
+.tb-row{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  height:54px;padding:0 14px;
+}
+.tb-brand{display:flex;align-items:center;gap:9px;border-radius:999px}
+.tb-brand .brandmark{width:34px;height:34px;flex:0 0 34px;border-radius:10px}
+.tb-brand .brand-name{font-size:18px}
+.tb-actions{
+  display:flex;align-items:center;gap:5px;
+  flex:0 0 auto;margin-left:auto;
+}
+
+/* ---------- 7. 内容流 ---------- */
+.stream{display:block}
+.empty{
+  padding:40px 16px 32px;
+  color:var(--muted);
+  font-size:14px;
+  line-height:1.6;
+  text-align:center;
+}
+.stream-end{
+  padding:24px 16px 44px;
+  color:var(--muted-2);font-size:12px;line-height:1.6;text-align:center;
+}
+
+/* ---------- 8. 右栏：弱化搜索框 ---------- */
+.rail-search{
+  display:flex;align-items:center;gap:10px;
+  width:100%;height:44px;padding:0 15px;
+  border-radius:999px;
+  background:var(--bg-soft);
+  border:1px solid transparent;
+  color:var(--muted);font-size:14px;
+  transition:background .12s ease,border-color .12s ease,color .12s ease;
+}
+.rail-search:hover{border-color:var(--line-strong);color:var(--ink)}
+.rail-search:focus-within{border-color:var(--accent);color:var(--ink)}
+.rail-search .ic{color:var(--muted-2)}
+.rail-search:hover .ic{color:var(--muted)}
+.rail-search-input{
+  flex:1;min-width:0;padding:0;margin:0;
+  border:0;background:none;
+  color:var(--ink);font:inherit;
+}
+.rail-search-input::placeholder{color:var(--muted-2)}
+.rail-search-input:focus-visible{outline-offset:4px}
+
+/* ---------- 9. 状态页 ---------- */
+.status-page{
+  max-width:560px;
+  margin:0 auto;
+  padding:96px 24px;
+  text-align:center;
+}
+.status-page h1{font-size:28px;font-weight:800;letter-spacing:-.02em}
+.status-page p{margin-top:12px;color:var(--muted);font-size:14px;line-height:1.7}
+.status-page .status-id{color:var(--muted-2);font-size:12px;font-variant-numeric:tabular-nums}
+.status-page a{color:var(--accent);font-weight:600}
+
+/* ---------- 10. 移动端底部导航 ---------- */
+.bottom-nav{display:none}
+
+/* ---------- 11. 断点 ---------- */
+@media (max-width:1239px){
+  .app{grid-template-columns:var(--rail-icon-w) var(--main-w)}
+
+  .rail-left{padding:14px 12px 16px;align-items:center}
+  .rail-top{width:100%}
+  .brand{width:44px;padding:0;justify-content:center;margin-bottom:8px;align-self:center}
+  .nav{width:100%;align-items:center;gap:4px}
+  .nav-item{width:44px;height:44px;justify-content:center;gap:0;padding:0}
+
+  .brand-name,
+  .nav-item .label{
+    position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+    overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0;
+  }
+
+  .rail-right{display:none}
+}
+
+@media (max-width:700px){
+  .app{display:block}
+  .rail-left,.rail-right{display:none}
+  .main{min-height:0}
+  .topbar{display:block}
+
+  body{padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+
+  .bottom-nav{
+    position:fixed;left:0;right:0;bottom:0;z-index:30;
+    display:flex;align-items:stretch;
+    padding:4px 6px calc(4px + env(safe-area-inset-bottom));
+    background:var(--bg-blur);
+    -webkit-backdrop-filter:blur(14px);
+    backdrop-filter:blur(14px);
+    border-top:1px solid var(--line);
+  }
+  .bottom-nav > *{
+    flex:1 1 0;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    min-height:52px;border-radius:12px;
+    color:var(--muted);font-size:10.5px;font-weight:600;
+  }
+  .bottom-nav > *.on{color:var(--ink);font-weight:700}
+  .bottom-nav > *.on .ic{stroke-width:2.2}
+}
+
+@media (prefers-reduced-motion:reduce){
+  *{transition-duration:.01ms !important;animation-duration:.01ms !important}
+}

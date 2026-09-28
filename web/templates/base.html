@@ -1,0 +1,147 @@
+{{define "base"}}<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{block "title" .}}Boop{{end}}</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js"></script>
+</head>
+<body>
+
+<!-- ========== SVG 精灵：图标（内联，无外部资源） ========== -->
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-logo" viewBox="0 0 24 24">
+    <path d="M14.8 4.29A8.2 8.2 0 1 1 9.2 4.29"/>
+    <circle cx="12" cy="12" r="4.2"/>
+    <circle cx="12" cy="12" r="1.7" fill="currentColor"/>
+  </symbol>
+  <symbol id="i-home" viewBox="0 0 24 24">
+    <path d="M4 10.6 12 4l8 6.6v8.8a1.6 1.6 0 0 1-1.6 1.6H5.6A1.6 1.6 0 0 1 4 19.4z"/>
+    <path d="M9.6 21v-7.2h4.8V21"/>
+  </symbol>
+  <symbol id="i-search" viewBox="0 0 24 24">
+    <circle cx="10.8" cy="10.8" r="6.6"/>
+    <path d="m20.2 20.2-4.9-4.9"/>
+  </symbol>
+  <symbol id="i-article" viewBox="0 0 24 24">
+    <path d="M13.6 3.4H7.2A2.2 2.2 0 0 0 5 5.6v12.8a2.2 2.2 0 0 0 2.2 2.2h9.6a2.2 2.2 0 0 0 2.2-2.2V8.8z"/>
+    <path d="M13.6 3.4v5.4h5.4"/>
+    <path d="M8.8 12.8h6.4M8.8 16.4h4.2"/>
+  </symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24">
+    <path d="M3.4 9.4A2.4 2.4 0 0 1 5.8 7h1.5l1.5-2.3h6.4L16.7 7h1.5a2.4 2.4 0 0 1 2.4 2.4v7.2a2.4 2.4 0 0 1-2.4 2.4H5.8a2.4 2.4 0 0 1-2.4-2.4z"/>
+    <circle cx="12" cy="13.2" r="3.5"/>
+  </symbol>
+  <symbol id="i-bookmark" viewBox="0 0 24 24">
+    <path d="M18.6 20.6 12 15.6l-6.6 5V5.8a2 2 0 0 1 2-2h9.2a2 2 0 0 1 2 2z"/>
+  </symbol>
+  <symbol id="i-user" viewBox="0 0 24 24">
+    <circle cx="12" cy="8" r="3.8"/>
+    <path d="M4.9 20.4a7.4 7.4 0 0 1 14.2 0"/>
+  </symbol>
+  <symbol id="i-login" viewBox="0 0 24 24">
+    <path d="M3.4 12h10.4"/>
+    <path d="m9.4 7.6 4.4 4.4-4.4 4.4"/>
+    <path d="M15.4 3.6h2.8A2.4 2.4 0 0 1 20.6 6v12a2.4 2.4 0 0 1-2.4 2.4h-2.8"/>
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24">
+    <path d="M20.3 12.7A8.3 8.3 0 1 1 11.3 3.7a6.6 6.6 0 0 0 9 9z"/>
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="4.2"/>
+    <path d="M12 2.8V5M12 19v2.2M4.5 4.5 6.1 6.1M17.9 17.9l1.6 1.6M2.8 12H5M19 12h2.2M4.5 19.5l1.6-1.6M17.9 6.1l1.6-1.6"/>
+  </symbol>
+</svg>
+
+<div class="app">
+
+  <!-- ========== 左栏 ========== -->
+  <aside class="rail-left">
+    <div class="rail-top">
+      <a class="brand" href="/" aria-label="Boop 首页">
+        <span class="brandmark" aria-hidden="true"><svg class="ic ic-logo" viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
+        <span class="brand-name">Boop</span>
+      </a>
+      <nav class="nav" aria-label="主导航">
+        <a class="nav-item{{if eq .Filter ""}} on{{end}}" href="/"{{if eq .Filter ""}} aria-current="page"{{end}}>
+          <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-home"/></svg><span class="label">首页</span>
+        </a>
+        <a class="nav-item" href="/search">
+          <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg><span class="label">搜索</span>
+        </a>
+        <a class="nav-item{{if eq .Filter "article"}} on{{end}}" href="/?type=article"{{if eq .Filter "article"}} aria-current="page"{{end}}>
+          <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-article"/></svg><span class="label">文章</span>
+        </a>
+        <a class="nav-item{{if eq .Filter "photo"}} on{{end}}" href="/?type=photo"{{if eq .Filter "photo"}} aria-current="page"{{end}}>
+          <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-camera"/></svg><span class="label">摄影</span>
+        </a>
+        <a class="nav-item" href="/bookmarks">
+          <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bookmark"/></svg><span class="label">收藏</span>
+        </a>
+        <a class="nav-item" href="/login">
+          <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-user"/></svg><span class="label">我的</span>
+        </a>
+        <button class="nav-item" type="button" data-theme-toggle data-theme-prefix="外观" aria-label="外观：切换到深色主题" title="切换到深色主题">
+          <svg class="ic ic-nav ic-moon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-moon"/></svg>
+          <svg class="ic ic-nav ic-sun" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sun"/></svg>
+          <span class="label">外观</span>
+        </button>
+      </nav>
+    </div>
+  </aside>
+
+  <!-- ========== 中栏 ========== -->
+  <main class="main">
+    <header class="topbar">
+      <div class="tb-row">
+        <a class="tb-brand" href="/" aria-label="Boop 首页">
+          <span class="brandmark" aria-hidden="true"><svg class="ic ic-logo" viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
+          <span class="brand-name">Boop</span>
+        </a>
+        <div class="tb-actions">
+          <button class="icon-btn" type="button" data-theme-toggle aria-label="切换到深色主题" title="切换到深色主题">
+            <svg class="ic ic-nav ic-moon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-moon"/></svg>
+            <svg class="ic ic-nav ic-sun" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sun"/></svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    {{block "content" .}}{{end}}
+  </main>
+
+  <!-- ========== 右栏 ========== -->
+  <aside class="rail-right">
+    <form class="rail-search" action="/search" method="get" role="search">
+      <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg>
+      <label class="sr-only" for="rail-search-input">搜索 Boop</label>
+      <input class="rail-search-input" id="rail-search-input" name="q" type="search" placeholder="搜索 Boop" autocomplete="off" maxlength="100">
+    </form>
+  </aside>
+
+</div>
+
+<!-- ========== 移动端固定底部导航 ========== -->
+<nav class="bottom-nav" aria-label="移动端导航">
+  <a class="{{if eq .Filter ""}}on{{end}}" href="/"{{if eq .Filter ""}} aria-current="page"{{end}}>
+    <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-home"/></svg><span>首页</span>
+  </a>
+  <a class="{{if eq .Filter "article"}}on{{end}}" href="/?type=article"{{if eq .Filter "article"}} aria-current="page"{{end}}>
+    <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-article"/></svg><span>文章</span>
+  </a>
+  <a class="{{if eq .Filter "photo"}}on{{end}}" href="/?type=photo"{{if eq .Filter "photo"}} aria-current="page"{{end}}>
+    <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-camera"/></svg><span>摄影</span>
+  </a>
+  <a href="/bookmarks">
+    <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bookmark"/></svg><span>收藏</span>
+  </a>
+  <a href="/login">
+    <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-login"/></svg><span>我的</span>
+  </a>
+</nav>
+
+</body>
+</html>
+{{end}}
