@@ -144,7 +144,7 @@ func TestPatchSettingsUpdatesValues(t *testing.T) {
 	login := f.login(t, owner.Email, authPassword, nil)
 	cookie, csrf := sessionCookie(t, login), decodeData(t, login)["csrf_token"].(string)
 
-	rec := f.patchSettings(t, `{"site_name":"少爷的博客","site_description":"海边","site_avatar_url":"https://cdn.example.com/avatar.png","site_timezone":"UTC",
+	rec := f.patchSettings(t, `{"site_name":"少爷的博客","site_description":"海边","site_avatar_url":"https://cdn.example.com/avatar.png","site_icon_url":"https://cdn.example.com/favicon.png","site_timezone":"UTC",
 		"page_size":42,"registration_enabled":false,"comments_enabled":false,"comments_moderation_enabled":true,
 		"ai_enabled":true,"ai_base_url":"https://api.example.com/v1","ai_chat_model":"gpt-4o-mini",
 		"ai_embedding_model":"text-embedding-3-small","ai_author_status_ttl_hours":24}`, cookie, csrf)
@@ -156,6 +156,7 @@ func TestPatchSettingsUpdatesValues(t *testing.T) {
 		"site_name":                   "少爷的博客",
 		"site_description":            "海边",
 		"site_avatar_url":             "https://cdn.example.com/avatar.png",
+		"site_icon_url":               "https://cdn.example.com/favicon.png",
 		"site_timezone":               "UTC",
 		"page_size":                   float64(42),
 		"registration_enabled":        false,
@@ -233,6 +234,9 @@ func TestPatchSettingsRejectsUnknownFieldsAndValues(t *testing.T) {
 		{"relative avatar", `{"site_avatar_url":"/avatar.png"}`, http.StatusBadRequest, "invalid_settings"},
 		{"avatar with a wrong scheme", `{"site_avatar_url":"javascript:alert(1)"}`, http.StatusBadRequest, "invalid_settings"},
 		{"avatar with credentials", `{"site_avatar_url":"https://user:pass@example.com/a.png"}`, http.StatusBadRequest, "invalid_settings"},
+		{"relative icon", `{"site_icon_url":"/favicon.png"}`, http.StatusBadRequest, "invalid_settings"},
+		{"icon with a wrong scheme", `{"site_icon_url":"javascript:alert(1)"}`, http.StatusBadRequest, "invalid_settings"},
+		{"icon with credentials", `{"site_icon_url":"https://user:pass@example.com/favicon.png"}`, http.StatusBadRequest, "invalid_settings"},
 		{"unknown secret to clear", `{"clear_secret":["github.nope"]}`, http.StatusBadRequest, "invalid_settings"},
 		{"not an object", `[]`, http.StatusBadRequest, "invalid_body"},
 		{"trailing content", `{"site_name":"a"}{"site_name":"b"}`, http.StatusBadRequest, "invalid_body"},
@@ -503,6 +507,87 @@ func TestAuthorAvatarFallback(t *testing.T) {
 	}
 }
 
+// TestSiteIconFaviconFallback pins the tab icon chain and, just as important, its
+// separation from the avatar: the icon is what the browser tab shows, the avatar
+// is the face next to every post, and configuring one must not move the other.
+func TestSiteIconFaviconFallback(t *testing.T) {
+	f := newSettingsFixture(t)
+	owner := f.bootstrapOwner(t, "owner@example.com", "遇事开心")
+	login := f.login(t, owner.Email, authPassword, nil)
+	cookie, csrf := sessionCookie(t, login), decodeData(t, login)["csrf_token"].(string)
+
+	const (
+		siteAvatar  = "https://cdn.example.com/site-avatar.png"
+		siteIcon    = "https://cdn.example.com/site-icon.png"
+		ownerAvatar = "https://cdn.example.com/owner-avatar.png"
+	)
+	builtin := `<link rel="icon" type="image/svg+xml" href="/static/brand/boop-mark.svg">`
+
+	patch := func(body string) {
+		t.Helper()
+		rec := f.patchSettings(t, body, cookie, csrf)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("patch %s: status = %d: %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	home := func() string {
+		t.Helper()
+		rec := f.do(t, http.MethodGet, "/", "", nil, cookie)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("home: status = %d, want 200", rec.Code)
+		}
+		return rec.Body.String()
+	}
+	favicon := func(body string) string {
+		t.Helper()
+		start := strings.Index(body, `<link rel="icon"`)
+		if start < 0 {
+			t.Fatal("the page has no favicon link")
+		}
+		rest := body[start:]
+		end := strings.Index(rest, ">")
+		return rest[:end+1]
+	}
+
+	if _, err := f.db.Exec(`UPDATE users SET avatar_url = ? WHERE id = ?`, ownerAvatar, owner.ID); err != nil {
+		t.Fatalf("set the owner avatar: %v", err)
+	}
+
+	// Only the icon is configured: the tab uses it, the avatar keeps the account
+	// fallback.
+	patch(`{"site_icon_url":"` + siteIcon + `"}`)
+	body := home()
+	if got := favicon(body); got != `<link rel="icon" href="`+siteIcon+`">` {
+		t.Errorf("favicon = %s, want the configured site icon", got)
+	}
+	if !strings.Contains(body, ownerAvatar) {
+		t.Error("the site icon replaced the visible avatar")
+	}
+
+	// Both configured: the icon still wins the tab, the avatar still shows the
+	// site avatar in the page.
+	patch(`{"site_avatar_url":"` + siteAvatar + `"}`)
+	body = home()
+	if got := favicon(body); got != `<link rel="icon" href="`+siteIcon+`">` {
+		t.Errorf("favicon = %s, want the site icon to outrank the avatar", got)
+	}
+	if !strings.Contains(body, siteAvatar) {
+		t.Error("the configured site avatar is not rendered in the page")
+	}
+
+	// Clearing the icon falls back to the avatar, then to the built-in SVG.
+	patch(`{"site_icon_url":""}`)
+	body = home()
+	if got := favicon(body); got != `<link rel="icon" href="`+siteAvatar+`">` {
+		t.Errorf("favicon = %s, want the site avatar", got)
+	}
+	patch(`{"site_avatar_url":""}`)
+	body = home()
+	if got := favicon(body); got != builtin {
+		t.Errorf("favicon = %s, want the built-in icon", got)
+	}
+}
+
 // TestConfiguredAvatarRendersOnEveryContentSurface walks the four documented
 // places: the quick publisher, a feed card, a bookmark card and the detail page.
 func TestConfiguredAvatarRendersOnEveryContentSurface(t *testing.T) {
@@ -649,6 +734,7 @@ func TestAdminSettingsPageAndIndex(t *testing.T) {
 			`name="site_name"`,
 			`name="site_description"`,
 			`name="site_avatar_url"`,
+			`name="site_icon_url"`,
 			`name="page_size"`,
 			`name="registration_enabled"`,
 			`name="ai_api_key"`,

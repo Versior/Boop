@@ -22,7 +22,12 @@
           <span>站点头像 URL</span>
           <input name="site_avatar_url" type="url" maxlength="2048" value="{{.Settings.SiteAvatarURL}}" placeholder="https://example.com/avatar.png">
         </label>
-        <p class="settings-hint">留空则使用站长账号头像，再为空则使用内置图标；只接受 http/https 绝对地址，不能带账号密码。头像同时作为浏览器标签页图标。</p>
+        <p class="settings-hint">留空则使用站长账号头像，再为空则使用内置图标；只接受 http/https 绝对地址，不能带账号密码。</p>
+        <label class="auth-field">
+          <span>站点图标 URL</span>
+          <input name="site_icon_url" type="url" maxlength="2048" value="{{.Settings.SiteIconURL}}" placeholder="https://example.com/favicon.png">
+        </label>
+        <p class="settings-hint">浏览器标签页图标，与头像分开配置。留空则使用上面的站点头像，再为空则使用内置图标；只接受 http/https 绝对地址，不能带账号密码。</p>
         <label class="auth-field">
           <span>时区</span>
           <input name="site_timezone" type="text" required maxlength="64" value="{{.Settings.SiteTimezone}}">

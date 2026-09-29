@@ -8,7 +8,7 @@
 <title>{{block "title" .}}{{.SiteName}}{{end}}</title>
 {{if .SiteDescription}}<meta name="description" content="{{.SiteDescription}}">{{end}}
 <link rel="alternate" type="application/rss+xml" title="{{.SiteName}}" href="/feed.xml">
-{{if .SiteAvatarURL}}<link rel="icon" href="{{.SiteAvatarURL}}">{{else}}<link rel="icon" type="image/svg+xml" href="/static/brand/boop-mark.svg">{{end}}
+{{if .SiteIconURL}}<link rel="icon" href="{{.SiteIconURL}}">{{else if .SiteAvatarURL}}<link rel="icon" href="{{.SiteAvatarURL}}">{{else}}<link rel="icon" type="image/svg+xml" href="/static/brand/boop-mark.svg">{{end}}
 <link rel="stylesheet" href="/static/app.css">
 <script src="/static/app.js"></script>
 </head>

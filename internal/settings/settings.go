@@ -26,7 +26,7 @@ const (
 	maxSiteNameRunes    = 80
 	maxDescriptionRunes = 280
 	maxModelNameRunes   = 200
-	maxAvatarURLRunes   = 2048
+	maxAssetURLRunes    = 2048
 )
 
 // Setting keys as stored in the settings table.
@@ -34,6 +34,7 @@ const (
 	KeySiteName                  = "site.name"
 	KeySiteDescription           = "site.description"
 	KeySiteAvatarURL             = "site.avatar_url"
+	KeySiteIconURL               = "site.icon_url"
 	KeySiteTimezone              = "site.timezone"
 	KeyContentPageSize           = "content.page_size"
 	KeyAuthRegistrationEnabled   = "auth.registration_enabled"
@@ -92,6 +93,7 @@ type Values struct {
 	SiteName                  string
 	SiteDescription           string
 	SiteAvatarURL             string
+	SiteIconURL               string
 	SiteTimezone              string
 	PageSize                  int
 	RegistrationEnabled       bool
@@ -110,6 +112,7 @@ func Defaults() Values {
 		SiteName:                  "Boop",
 		SiteDescription:           "遇事开心的个人博客",
 		SiteAvatarURL:             "",
+		SiteIconURL:               "",
 		SiteTimezone:              "Asia/Shanghai",
 		PageSize:                  20,
 		RegistrationEnabled:       true,
@@ -395,12 +398,12 @@ func validate(key string, value any) error {
 		return validateText(key, value, 1, maxSiteNameRunes)
 	case KeySiteDescription:
 		return validateText(key, value, 0, maxDescriptionRunes)
-	case KeySiteAvatarURL:
-		avatar, err := requireString(key, value)
+	case KeySiteAvatarURL, KeySiteIconURL:
+		asset, err := requireString(key, value)
 		if err != nil {
 			return err
 		}
-		return validateAvatarURL(key, avatar)
+		return validateAssetURL(key, asset)
 	case KeyAIChatModel, KeyAIEmbeddingModel:
 		return validateText(key, value, 0, maxModelNameRunes)
 	case KeySiteTimezone:
@@ -496,15 +499,16 @@ func validateBaseURL(key, raw string) error {
 	return nil
 }
 
-// validateAvatarURL accepts an empty value (the built-in placeholder is used)
-// or an absolute http(s) URL without credentials and within a sane length, so
-// one setting can never render an off-scheme or unbounded resource reference.
-func validateAvatarURL(key, raw string) error {
+// validateAssetURL accepts an empty value (nothing is configured, so the caller
+// falls back) or an absolute http(s) URL without credentials and within a sane
+// length, so one setting can never render an off-scheme or unbounded resource
+// reference. It backs both the site avatar and the site icon.
+func validateAssetURL(key, raw string) error {
 	if raw == "" {
 		return nil
 	}
-	if utf8.RuneCountInString(raw) > maxAvatarURLRunes {
-		return fmt.Errorf("settings: set: %s must be at most %d characters", key, maxAvatarURLRunes)
+	if utf8.RuneCountInString(raw) > maxAssetURLRunes {
+		return fmt.Errorf("settings: set: %s must be at most %d characters", key, maxAssetURLRunes)
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
@@ -528,6 +532,7 @@ func fieldsOf(values *Values) map[string]any {
 		KeySiteName:                  &values.SiteName,
 		KeySiteDescription:           &values.SiteDescription,
 		KeySiteAvatarURL:             &values.SiteAvatarURL,
+		KeySiteIconURL:               &values.SiteIconURL,
 		KeySiteTimezone:              &values.SiteTimezone,
 		KeyContentPageSize:           &values.PageSize,
 		KeyAuthRegistrationEnabled:   &values.RegistrationEnabled,

@@ -193,6 +193,7 @@ CREATE VIRTUAL TABLE post_search USING fts5(
   "site.name": "Boop",
   "site.description": "遇事开心的个人博客",
   "site.avatar_url": "",
+  "site.icon_url": "",
   "site.timezone": "Asia/Shanghai",
   "content.page_size": 20,
   "auth.registration_enabled": true,

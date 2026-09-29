@@ -186,12 +186,17 @@ type pageView struct {
 	// Owner is true for the signed-in owner, so the shell can offer the
 	// moderation entry without every page computing it.
 	Owner bool
-	// SiteName, SiteDescription and SiteAvatarURL are the configured brand of the
-	// site. Every page renders them (title suffix, brand, aria labels, search
-	// placeholder, meta description), so no user-visible surface hardcodes a name.
+	// SiteName, SiteDescription, SiteAvatarURL and SiteIconURL are the configured
+	// brand of the site. Every page renders them (title suffix, brand, aria
+	// labels, search placeholder, meta description, favicon), so no user-visible
+	// surface hardcodes a name.
 	SiteName        string
 	SiteDescription string
 	SiteAvatarURL   string
+	// SiteIconURL is the browser tab icon on its own. It is separate from the
+	// avatar so a site can brand the tab without changing the face next to every
+	// post.
+	SiteIconURL string
 	// AIStatus is the author status card of the home right rail. It stays zero on
 	// every other page, so the shared shell renders no card outside the home page
 	// and no other page ever reads the AI cache.
@@ -214,6 +219,7 @@ func (s *server) shellViewWithSettings(r *http.Request, filter string, values se
 		SiteName:        values.SiteName,
 		SiteDescription: values.SiteDescription,
 		SiteAvatarURL:   values.SiteAvatarURL,
+		SiteIconURL:     values.SiteIconURL,
 	}
 	if state, ok := authStateFrom(r.Context()); ok && state.authenticated {
 		view.CSRFToken = state.session.CSRFToken

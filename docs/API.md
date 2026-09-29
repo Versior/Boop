@@ -142,9 +142,9 @@ GitHub 登录规则：
 设置接口规则：
 
 - 两个接口都只允许 owner：游客 401 `unauthorized`，读者 403 `forbidden`。
-- `GET` 返回 `site_name`、`site_description`、`site_avatar_url`、`site_timezone`、`page_size`、`registration_enabled`、`comments_enabled`、`comments_moderation_enabled`、`ai_enabled`、`ai_base_url`、`ai_chat_model`、`ai_embedding_model`、`ai_author_status_ttl_hours`，以及 `github_client_id_set`、`github_client_secret_set`、`ai_api_key_set`、`master_key` 四个布尔标志。**任何密钥明文都不会出现在响应里**，页面只知道某个密钥是否已配置。
+- `GET` 返回 `site_name`、`site_description`、`site_avatar_url`、`site_icon_url`、`site_timezone`、`page_size`、`registration_enabled`、`comments_enabled`、`comments_moderation_enabled`、`ai_enabled`、`ai_base_url`、`ai_chat_model`、`ai_embedding_model`、`ai_author_status_ttl_hours`，以及 `github_client_id_set`、`github_client_secret_set`、`ai_api_key_set`、`master_key` 四个布尔标志。**任何密钥明文都不会出现在响应里**，页面只知道某个密钥是否已配置。
 - `PATCH` 只接受上述字段加上三个密钥字段（`github_client_id`、`github_client_secret`、`ai_api_key`）和 `clear_secret`；上传目录、单文件大小与允许的 MIME 类型只能由环境变量配置，请求里出现即 400 `invalid_body`。
-- `site_avatar_url` 允许为空（表示不配置站点头像），非空时必须是**无凭据的 http/https 绝对 URL**，且不超过 2048 个字符；相对路径、其它协议、带 `user:pass@` 的值一律 400 `invalid_settings`。
+- `site_avatar_url` 与 `site_icon_url` 允许为空（分别表示不配置站点头像、不配置站点图标），非空时必须是**无凭据的 http/https 绝对 URL**，且不超过 2048 个字符；相对路径、其它协议、带 `user:pass@` 的值一律 400 `invalid_settings`。`site_icon_url` 是独立的浏览器标签页图标，只影响 `<link rel="icon">`，不参与页面里的头像渲染。
 - 密钥字段为空字符串表示**保持不变**（不会清空）；删除必须显式列出密钥名，例如 `{"clear_secret":["github.client_secret"]}`，删除不存在的密钥是幂等的；`clear_secret` 里的未知名返回 400 `invalid_settings`。
 - 值校验沿用 `internal/settings` 的类型与范围规则：非法值返回 400 `invalid_settings`，且**整次更新失败**——校验先于事务，不会出现部分字段已写入的状态。
 - 密钥用 `BOOP_MASTER_KEY` 的 AES-256-GCM 加密后存入 `secret_settings`，每次写入生成新的 nonce；**密文同时以它自己的 settings key 作为 GCM additional data 绑定**，因此把某条密文换到另一个 key（或另一个 setting）上都无法解密，只会得到认证失败，绝不会返回明文。
@@ -184,7 +184,7 @@ AI 接口规则：
 品牌与头像：
 
 - `site_name`、`site_description`、`site_avatar_url` 注入所有页面的外壳：标题后缀、桌面与移动品牌名、品牌 `aria-label`、搜索框标签与占位符、`meta description`，以及首页可见文案（`sr-only` 标题与底部说明）。页面外壳不再硬编码任何品牌名。
-- 渲染头像的优先级是 `site_avatar_url` → 站长账号 `users.avatar_url` → 内置 SVG，用于快捷发布、信息流卡片、收藏卡片与内容详情；`site_avatar_url` 同时作为页面 `<link rel="icon">`，为空时不输出。CSP 的 `img-src` 为 `'self' data: http: https:`，否则配置的绝对头像地址会被浏览器直接拦掉；脚本、样式与连接仍然是同源（`script-src 'self'`、`connect-src 'self'`）。
+- 渲染头像的优先级是 `site_avatar_url` → 站长账号 `users.avatar_url` → 内置 SVG，用于快捷发布、信息流卡片、收藏卡片与内容详情。页面 `<link rel="icon">` 用另一条链：`site_icon_url` → `site_avatar_url` → 内置 SVG 图标，因此标签页图标可以独立于头像配置。两条链互不影响。CSP 的 `img-src` 为 `'self' data: http: https:`，否则配置的绝对地址会被浏览器直接拦掉；脚本、样式与连接仍然是同源（`script-src 'self'`、`connect-src 'self'`）。
 - 展示路径读取设置失败时回退到默认值并写一条告警（页面仍然可用）；而设置表单和写入路径在设置损坏时返回 500 / 4xx，避免把默认值写回去覆盖真实设置。
 - 首页、内容详情、收藏页在已经读过设置时复用同一次读取（只注入外壳），不会为品牌再查一次库。
 

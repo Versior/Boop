@@ -21,6 +21,7 @@ type settingsPayload struct {
 	SiteName                  string `json:"site_name"`
 	SiteDescription           string `json:"site_description"`
 	SiteAvatarURL             string `json:"site_avatar_url"`
+	SiteIconURL               string `json:"site_icon_url"`
 	SiteTimezone              string `json:"site_timezone"`
 	PageSize                  int    `json:"page_size"`
 	RegistrationEnabled       bool   `json:"registration_enabled"`
@@ -47,6 +48,7 @@ type settingsRequest struct {
 	SiteName                  *string `json:"site_name"`
 	SiteDescription           *string `json:"site_description"`
 	SiteAvatarURL             *string `json:"site_avatar_url"`
+	SiteIconURL               *string `json:"site_icon_url"`
 	SiteTimezone              *string `json:"site_timezone"`
 	PageSize                  *int    `json:"page_size"`
 	RegistrationEnabled       *bool   `json:"registration_enabled"`
@@ -81,6 +83,7 @@ func (s *server) settingsPayloadOf(ctx context.Context) (settingsPayload, error)
 		SiteName:                  values.SiteName,
 		SiteDescription:           values.SiteDescription,
 		SiteAvatarURL:             values.SiteAvatarURL,
+		SiteIconURL:               values.SiteIconURL,
 		SiteTimezone:              values.SiteTimezone,
 		PageSize:                  values.PageSize,
 		RegistrationEnabled:       values.RegistrationEnabled,
@@ -133,6 +136,9 @@ func (s *server) handlePatchSettingsAPI(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.SiteAvatarURL != nil {
 		values[settings.KeySiteAvatarURL] = *body.SiteAvatarURL
+	}
+	if body.SiteIconURL != nil {
+		values[settings.KeySiteIconURL] = *body.SiteIconURL
 	}
 	if body.SiteTimezone != nil {
 		values[settings.KeySiteTimezone] = *body.SiteTimezone
