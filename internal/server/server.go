@@ -230,6 +230,14 @@ type pageView struct {
 	SiteName        string
 	SiteDescription string
 	SiteAvatarURL   string
+	// SiteWordmark is true while the name is still the one the project ships
+	// with. The shell then draws the brand as a vector wordmark instead of
+	// setting the name in type. A wordmark is a drawing of one specific word:
+	// it can only stand in for that word, so the moment the owner renames the
+	// site the shell has to go back to type or the page would advertise a name
+	// that is not this site's. Compared against the shipped default rather than
+	// a literal here so the two cannot drift apart.
+	SiteWordmark bool
 	// SiteIconURL is the browser tab icon on its own. It is separate from the
 	// avatar so a site can brand the tab without changing the face next to every
 	// post.
@@ -264,6 +272,7 @@ func (s *server) shellViewWithSettings(r *http.Request, filter string, values se
 		SiteDescription: values.SiteDescription,
 		SiteAvatarURL:   values.SiteAvatarURL,
 		SiteIconURL:     values.SiteIconURL,
+		SiteWordmark:    values.SiteName == settings.Defaults().SiteName,
 		StaticVersion:   staticAssets().version,
 		Meta:            s.pageMetaOf(r),
 	}

@@ -1,3 +1,33 @@
+<!-- 站名的两副面孔，一处定义、三处复用（前台图标栏、移动端顶栏、后台侧栏）。站点名还是
+     出厂名的时候画字标：那枚字标拼的是「Boop」这一个词，所以它只能替这一个词——站长改了
+     站名就必须退回「方块标记 + 文字」，否则页面会对着一个不属于自己的名字招人。
+
+     拆成两个片段是因为后台侧栏的结构不同：它的名字和「站长后台」是上下叠在一列里的，
+     标记得单独站在那一列左边。前台两处是平铺一行，两句连写就行。
+
+     **这两段必须留在文件最外层**，不能挪进 base 那个 define 里面去：Go 模板不允许
+     define 套 define（套了会报 unexpected define in command），而 base.html 除这两段
+     之外整份都在 base 这一个 define 体内。 -->
+
+<!-- 方块标记：只在文字那副面孔里出现。字标自己就是一整套字形，前面再放一个带「b」的方块
+     等于把同一句话起两次头；文字没有自带的字形，才需要标记来立住。 -->
+{{define "brand-mark"}}
+  {{- if not .SiteWordmark -}}
+  <span class="brandmark" aria-hidden="true"><svg class="ic ic-logo" viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
+  {{- end -}}
+{{end}}
+
+<!-- 名字本身：字标，或文字。字标那条把站名留在无障碍树里（.sr-only）：那枚 svg 是
+     aria-hidden 的，不留一份真文字，这个链接就没有名字了。 -->
+{{define "brand-type"}}
+  {{- if .SiteWordmark -}}
+  <svg class="wordmark" viewBox="0 0 900.5 340.1" aria-hidden="true"><use href="#i-wordmark"/></svg>
+  <span class="sr-only">{{.SiteName}}</span>
+  {{- else -}}
+  <span class="brand-name">{{.SiteName}}</span>
+  {{- end -}}
+{{end}}
+
 {{define "base"}}<!doctype html>
 <html lang="zh-CN" data-theme="light">
 <head>
@@ -107,6 +137,25 @@
     <path d="M12 3.6l1.9 6.5 6.5 1.9-6.5 1.9L12 20.4l-1.9-6.5L3.6 12l6.5-1.9z"/>
     <path d="M18.4 4.2l.6 1.9 1.9.6-1.9.6-.6 1.9-.6-1.9-1.9-.6 1.9-.6z"/>
   </symbol>
+  <!-- 站名的字标（站点名还是出厂名时用它代替排版，见 pageView.SiteWordmark）。它是**黑字**
+       （fill，不是 stroke），所以不跟 .ic 那套描边走。原文件带一大圈空白边距，这里的
+       viewBox 已经收到字形本身：长宽比 2.65:1。路径数据是站长给的那份描边稿，一个字没改。
+
+       **原点必须是 0 0**，和这套 sprite 里其他 symbol 一样——这条不是为了整齐。brand-type
+       里是用 use 引用它的，而 use 的视口按百分比落在**外层用户坐标系的 (0,0)** 上，symbol
+       的内容再被塞进那块视口：symbol 的 viewBox 一旦带非零原点，整幅字就被搬到视野外面，
+       页面上一片空白——而单独把这枚 svg 内联进一个测试页又是好好的，很容易骗过自己。
+       下面那个 translate(-245,-346.9) 就是把原来的原点减掉，路径数据本身没动。 -->
+  <symbol id="i-wordmark" viewBox="0 0 900.5 340.1">
+    <g transform="translate(-245,-346.9) translate(0,1040) scale(0.1,-0.1)">
+    <path d="M2556 6721 c-58 -116 -106 -213 -106 -216 0 -3 56 -5 125 -5 l125 0 0 -730 0 -730 253 2 252 3 0 725 0 725 362 0 363 0 27 -28 28 -27 2 -193 2 -193 -28 -35 -29 -34 -206 -3 -206 -3 -103 -202 c-56 -111 -103 -208 -105 -214 -3 -10 79 -13 387 -13 214 0 400 4 413 9 13 5 102 87 199 183 130 127 178 181 183 203 3 17 4 188 3 380 -2 340 -3 351 -25 399 -37 80 -85 132 -160 168 l-67 33 -792 3 -792 3 -105 -210z"/>
+    <path d="M5022 5458 l3 -723 26 -56 c34 -72 95 -134 167 -167 l57 -27 550 -3 c303 -2 566 0 585 3 28 5 68 40 205 175 94 93 175 182 181 197 7 18 10 206 9 548 -1 513 -1 521 -23 568 -45 99 -107 157 -205 190 -42 14 -99 16 -418 14 l-370 -2 -109 -212 -109 -212 334 -3 335 -3 27 -28 28 -27 1 -357 1 -356 -28 -31 -27 -31 -334 -3 -334 -3 -23 25 -23 25 1 610 2 611 -256 0 -256 0 3 -722z"/>
+    <path d="M7302 5458 l3 -723 26 -56 c34 -72 95 -134 167 -167 l57 -27 550 -3 c303 -2 566 0 585 3 28 5 68 40 205 175 94 93 175 182 181 197 7 18 10 206 9 548 -1 513 -1 521 -23 568 -45 99 -107 157 -205 190 -42 14 -99 16 -418 14 l-370 -2 -109 -212 -109 -212 334 -3 335 -3 27 -28 28 -27 1 -357 1 -356 -28 -31 -27 -31 -334 -3 -334 -3 -23 25 -23 25 1 610 2 611 -256 0 -256 0 3 -722z"/>
+    <path d="M9757 6173 c-3 -4 -53 -101 -111 -215 l-107 -208 682 -2 681 -3 24 -30 24 -30 0 -353 c0 -223 -4 -360 -10 -373 -23 -41 -60 -49 -233 -49 l-163 0 -63 -132 c-34 -73 -79 -169 -100 -213 l-38 -80 346 -3 c215 -2 359 1 381 7 25 8 83 58 210 186 l175 175 0 543 c0 531 0 543 -21 587 -32 67 -95 132 -160 165 l-59 30 -727 3 c-399 1 -729 -1 -731 -5z"/>
+    <path d="M9767 5593 c-2 -5 -3 -469 -3 -1033 l1 -1025 253 -3 252 -2 0 1035 0 1035 -249 0 c-138 0 -252 -3 -254 -7z"/>
+    <path d="M4007 5462 c-15 -3 -17 -24 -18 -230 0 -125 -2 -236 -4 -246 -2 -11 -15 -31 -30 -45 l-25 -26 -634 -3 -633 -2 -107 -209 c-58 -115 -106 -212 -106 -215 0 -11 1637 -7 1667 5 38 14 360 335 372 371 5 15 10 155 11 313 l1 285 -103 1 c-57 1 -164 2 -238 3 -75 0 -143 0 -153 -2z"/>
+    </g>
+  </symbol>
 </svg>
 
 <div class="app{{if .Admin}} is-admin{{else if .AIStatus.Text}} has-rail{{end}}">
@@ -117,9 +166,9 @@
        长得一模一样。侧栏带文字，模块一眼可见；设置内部的分类在页面顶部那一排标签里。 -->
   <aside class="rail-admin" data-rail>
     <a class="admin-brand" href="/admin" title="站长后台">
-      <span class="brandmark" aria-hidden="true"><svg class="ic ic-logo" viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
+      {{template "brand-mark" .}}
       <span class="admin-brand-text">
-        <span class="admin-brand-name">{{.SiteName}}</span>
+        {{template "brand-type" .}}
         <span class="admin-brand-sub">站长后台</span>
       </span>
     </a>
@@ -142,7 +191,7 @@
   </aside>
   {{else}}
   <!-- ========== 左栏 ========== -->
-  <!-- 左栏是图标栏：最上面是品牌锁定组合（标记 + 站点名），中间是五个目的地，最下面是控件组。
+  <!-- 左栏是图标栏：最上面是品牌（出厂名画字标，改名后是标记 + 名字），中间是五个目的地，最下面是控件组。
        导航**不带文字**，每一项的文字留在无障碍树里（.sr-only）并另带 title 提示，读屏与鼠标
        都还知道那是什么；只有品牌名是可见文字，因为「这是哪个站」不属于图标能表达的事。
        五项而不是七项：外观是个开关而不是一个页面，它归底部控件组；「我的」原本直接链到 /login，
@@ -150,8 +199,7 @@
   <aside class="rail-left" data-rail>
     <div class="rail-top">
       <a class="brand" href="/" aria-label="{{.SiteName}} 首页">
-        <span class="brandmark" aria-hidden="true"><svg class="ic ic-logo" viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
-        <span class="brand-name">{{.SiteName}}</span>
+        {{template "brand-mark" .}}{{template "brand-type" .}}
       </a>
       <nav class="nav" aria-label="主导航">
         <a class="nav-item{{if eq .Filter ""}} on{{end}}" href="/"{{if eq .Filter ""}} aria-current="page"{{end}} title="首页">
@@ -204,8 +252,7 @@
     <header class="topbar">
       <div class="tb-row">
         <a class="tb-brand" href="/" aria-label="{{.SiteName}} 首页">
-          <span class="brandmark" aria-hidden="true"><svg class="ic ic-logo" viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
-          <span class="brand-name">{{.SiteName}}</span>
+          {{template "brand-mark" .}}{{template "brand-type" .}}
         </a>
         <div class="tb-actions">
           {{if .Owner}}

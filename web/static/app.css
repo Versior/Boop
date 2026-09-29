@@ -139,7 +139,7 @@ h1,h2,h3,p{margin:0}
 .main{min-width:0;min-height:100vh;min-height:100dvh}
 
 /* ---------- 5. 左栏 ---------- */
-/* 左栏是图标栏：品牌锁定组合在最上面，五个目的地在中间，控件组在最下面，三者都居中。
+/* 左栏是图标栏：品牌在最上面，五个目的地在中间，控件组在最下面，三者都居中。
    导航**不带文字**——文字留在无障碍树里，鼠标有 title 提示；只有品牌名是可见文字。
    五项而不是七项：外观是开关不是页面，归控件组；「我的」对已登录的人只是空跳转，
    也归控件组，未登录时才出现，并且就叫「登录」。 */
@@ -158,7 +158,20 @@ h1,h2,h3,p{margin:0}
   border-radius:11px;
   background:var(--mark-bg);color:var(--mark-fg);
 }
-/* 品牌名是这一栏唯一的可见文字，要自己撑起「刊头」这层意思。字体全部取自系统已有的衬线
+/* 字标是站长给的那份「Boop」绘图，站点名还是出厂名的时候它替掉排版走进来（见 base.html 的
+   brand-type）。它是**黑字**（fill）不是描边，所以不跟 .ic 那套 currentColor 描边走；颜色
+   直接用 --ink，深浅两档主题各自取自己那一份，不必再写一条深色覆盖。viewBox 已经收到字形
+   本身（长宽比 2.65:1），高度交给宽度推，所以只定宽。
+
+   **这里的宽度上限是算出来的**：左栏 180 − 左右各 14（.rail-left 的内边距）= 152，再减
+   .brand 自己的左右各 8 = 136px。超过 136 就会把 .brand 的 flex 撑开、把整条左栏顶歪。
+   其余两处按各自容器另给宽度（顶栏、后台侧栏各一条）。 */
+.wordmark{
+  display:block;width:120px;height:auto;flex:0 0 auto;
+  fill:var(--ink);
+}
+/* 另一副面孔：文字。只有站长把站名改成出厂名以外的字之后才会走到这一支。它是这一栏唯一的可见
+   文字，要自己撑起「刊头」这层意思。字体全部取自系统已有的衬线
    （macOS 的 Didot / Bodoni 72 / Songti SC、Windows 的 Georgia / SimSun、Android 的
    Noto Serif CJK），**不下载任何字体文件**：站点名是站长自己填的任意文本，自托管的 CJK
    字体只能整包（5MB 起），对一个 1 核 500MB 的项目不划算。
@@ -221,11 +234,16 @@ h1,h2,h3,p{margin:0}
   transition:background .12s ease;
 }
 .admin-brand:hover{background:var(--hover)}
-.admin-brand-text{display:flex;flex-direction:column;min-width:0}
-.admin-brand-name{
+/* 后台侧栏的品牌是上下叠着的一列，两行之间要留一口气：字标的「p」有一条下伸的腿，紧贴
+   下一行的汉字顶会糊在一起。 */
+.admin-brand-text{display:flex;flex-direction:column;gap:2px;min-width:0}
+/* 后台侧栏的排版面孔比前台小一号：这里名字和「站长后台」是上下叠着的一列，名字太大会把这一列
+   顶成一个封面。字标同理，压到与前台顶栏相当。 */
+.admin-brand .brand-name{
   font-size:15px;font-weight:800;letter-spacing:-.01em;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
+.admin-brand .wordmark{width:108px}
 .admin-brand-sub{color:var(--muted);font-size:12px}
 .admin-nav{display:flex;flex-direction:column;gap:2px;width:100%;flex:1 1 auto}
 .admin-nav-item{
@@ -266,6 +284,7 @@ h1,h2,h3,p{margin:0}
 .tb-brand{display:flex;align-items:center;gap:9px;border-radius:999px}
 .tb-brand .brandmark{width:34px;height:34px;flex:0 0 34px;border-radius:10px}
 .tb-brand .brand-name{font-size:21px}
+.tb-brand .wordmark{width:92px}
 .tb-actions{
   display:flex;align-items:center;gap:5px;
   flex:0 0 auto;margin-left:auto;
