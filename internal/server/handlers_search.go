@@ -136,9 +136,6 @@ func (s *server) handleSearchPage(w http.ResponseWriter, r *http.Request) {
 	}
 	view.ResultCount = len(view.Results)
 	view.Empty = !view.Prompted && view.ResultCount == 0
-	// The right rail repeats the current query; the center form stays the one
-	// that submits it.
-	view.SearchQuery = query
 	if page.NextCursor != "" {
 		view.LoadMoreURL = searchURL(query, page.NextCursor)
 	}

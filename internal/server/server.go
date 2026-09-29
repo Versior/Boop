@@ -195,9 +195,6 @@ func (s *server) handler() http.Handler {
 type pageView struct {
 	Filter    string
 	CSRFToken string
-	// SearchQuery is the query the search page is showing. It stays empty
-	// everywhere else, so the right rail only reflects a query on /search.
-	SearchQuery string
 	// Owner is true for the signed-in owner, so the shell can offer the
 	// moderation entry without every page computing it.
 	Owner bool

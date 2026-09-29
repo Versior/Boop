@@ -176,7 +176,7 @@ func TestHomeRendersEmbeddedShell(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		`<html lang="zh-CN"`,
-		`class="app"`,
+		`class="app has-rail"`,
 		`class="rail-left"`,
 		`class="rail-right"`,
 		`class="bottom-nav"`,
@@ -184,7 +184,8 @@ func TestHomeRendersEmbeddedShell(t *testing.T) {
 		`<link rel="stylesheet" href="/static/app.css?v=` + staticAssets().version + `">`,
 		`<link rel="icon" type="image/svg+xml" href="/static/brand/boop-mark.svg?v=` + staticAssets().version + `">`,
 		`<script src="/static/app.js?v=` + staticAssets().version + `"></script>`,
-		`action="/search"`,
+		// 搜索只剩入口链接一种形态：右栏那个会重复查询的表单已经删掉，shell 里不再有
+		// action="/search" 的表单。
 		`href="/search"`,
 		`href="/?type=article"`,
 		`href="/?type=photo"`,

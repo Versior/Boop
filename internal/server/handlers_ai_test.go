@@ -650,11 +650,20 @@ func TestHomeRendersTheAuthorStatusCard(t *testing.T) {
 	if rail < 0 || !strings.Contains(page[rail:], "AI 作者状态") {
 		t.Error("the desktop card must live in the right rail")
 	}
+	// The rail only exists to hold this card, so the grid carries the third track
+	// only where the card does. A rail left behind on pages without the card would
+	// still reserve its 336px track and push the center column off center.
+	if !strings.Contains(page, `class="app has-rail"`) {
+		t.Error("the home page does not give the shell its right rail track")
+	}
 
 	// Other pages carry no author status and no AI database work.
 	detail := f.do(t, http.MethodGet, "/p/"+post["slug"].(string), "", nil, nil).Body.String()
 	if strings.Contains(detail, "AI 作者状态") || strings.Contains(detail, "缓存状态") {
 		t.Error("the author status card must not render outside the home page")
+	}
+	if strings.Contains(detail, "rail-right") || strings.Contains(detail, "has-rail") {
+		t.Error("a page without the author status card still renders the right rail")
 	}
 	bookmarks := f.do(t, http.MethodGet, "/bookmarks", "", nil, f.cookie).Body.String()
 	if strings.Contains(bookmarks, "AI 作者状态") {

@@ -107,13 +107,17 @@ h1,h2,h3,p{margin:0}
 [data-theme="dark"] [data-theme-toggle] .ic-sun{display:block}
 
 /* ---------- 4. 三栏骨架 ---------- */
+/* 右栏是作者状态卡片的容器，只有首页在卡片有内容时才渲染它（见 base.html），所以网格的
+   第三道轨也跟着卡片走：卡片不在就只留左栏与中栏。显式轨道即使空着也照样占位，把 336px
+   留在那里会把中栏推到视觉中心的左边 —— 那正是 ≤1239px 时右栏 display:none 的老毛病。 */
 .app{
   display:grid;
-  grid-template-columns:var(--rail-icon-w) var(--main-w) var(--aside-w);
+  grid-template-columns:var(--rail-icon-w) var(--main-w);
   justify-content:center;
   align-items:start;
   margin:0 auto;
 }
+.app.has-rail{grid-template-columns:var(--rail-icon-w) var(--main-w) var(--aside-w)}
 .rail-left{
   position:sticky;top:0;
   height:100vh;height:100dvh;
@@ -660,29 +664,7 @@ button.action:disabled{opacity:.6;cursor:default}
   color:var(--danger);font-size:13px;line-height:1.6;
 }
 
-/* ---------- 8. 右栏：弱化搜索框 ---------- */
-.rail-search{
-  display:flex;align-items:center;gap:10px;
-  width:100%;height:44px;padding:0 15px;
-  border-radius:999px;
-  background:var(--bg-soft);
-  border:1px solid transparent;
-  color:var(--muted);font-size:14px;
-  transition:background .12s ease,border-color .12s ease,color .12s ease;
-}
-.rail-search:hover{border-color:var(--line-strong);color:var(--ink)}
-.rail-search:focus-within{border-color:var(--accent);color:var(--ink)}
-.rail-search .ic{color:var(--muted-2)}
-.rail-search:hover .ic{color:var(--muted)}
-.rail-search-input{
-  flex:1;min-width:0;padding:0;margin:0;
-  border:0;background:none;
-  color:var(--ink);font:inherit;
-}
-.rail-search-input::placeholder{color:var(--muted-2)}
-.rail-search-input:focus-visible{outline-offset:4px}
-
-/* ---------- 9. 认证页 ---------- */
+/* ---------- 8. 认证页 ---------- */
 .auth{
   padding:28px 20px 40px;
 }
@@ -749,7 +731,7 @@ button.action:disabled{opacity:.6;cursor:default}
 .auth-submit:hover{filter:brightness(1.06)}
 .auth-submit[disabled]{opacity:.6;cursor:progress}
 
-/* ---------- 10. 状态页 ---------- */
+/* ---------- 9. 状态页 ---------- */
 .status-page{
   max-width:560px;
   margin:0 auto;
@@ -761,12 +743,14 @@ button.action:disabled{opacity:.6;cursor:default}
 .status-page .status-id{color:var(--muted-2);font-size:12px;font-variant-numeric:tabular-nums}
 .status-page a{color:var(--accent);font-weight:600}
 
-/* ---------- 11. 移动端底部导航 ---------- */
+/* ---------- 10. 移动端底部导航 ---------- */
 .bottom-nav{display:none}
 
-/* ---------- 12. 断点 ---------- */
+/* ---------- 11. 断点 ---------- */
 /* 左栏在所有宽度上都是图标条，因此这里只处理右栏的收起与移动端状态卡片的接管。 */
 @media (max-width:1239px){
+  /* 卡片改由 home.html 的 .status-mobile 呈现，右栏整体消失，第三道轨要一起撤掉。 */
+  .app.has-rail{grid-template-columns:var(--rail-icon-w) var(--main-w)}
   .rail-right{display:none}
 
   .status-mobile{display:block;padding:14px var(--pad) 16px;border-bottom:1px solid var(--line)}

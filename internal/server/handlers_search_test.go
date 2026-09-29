@@ -219,15 +219,30 @@ func TestSearchPageStatesAndActiveNav(t *testing.T) {
 		}
 	})
 
-	t.Run("right rail repeats the query", func(t *testing.T) {
+	// The rail used to carry a second search form that repeated the query. It is
+	// gone on purpose, so this pins both halves of the trade: the rail no longer
+	// renders a form, and the query still reaches the visitor through the search
+	// page's own input. A shell that dropped the rail form *and* stopped echoing
+	// the query would be a silent regression, not a cleanup.
+	t.Run("the right rail carries no search form", func(t *testing.T) {
 		body := f.do(t, http.MethodGet, "/search?q=写作", "", nil, nil).Body.String()
-		if !strings.Contains(body, `id="rail-search-input"`) || !strings.Contains(body, `value="写作"`) {
-			t.Error("the right-rail search form does not reflect the current query")
+		if strings.Contains(body, "rail-search") {
+			t.Error("the right rail still renders a search form")
 		}
-		// Every other page keeps an empty rail input.
+		if !strings.Contains(body, `id="search-input" name="q" type="search" value="写作"`) {
+			t.Error("the search page does not echo the query into its own form")
+		}
+		// Removing the rail form must not remove the only way to reach /search:
+		// the left rail icon covers wide viewports, the bottom nav covers phones.
+		if !strings.Contains(body, `href="/search"`) {
+			t.Error("the search page offers no way to reach /search")
+		}
 		home := f.do(t, http.MethodGet, "/", "", nil, nil).Body.String()
-		if !strings.Contains(home, `id="rail-search-input" name="q" type="search" value=""`) {
-			t.Error("the rail search form of the home page is not empty")
+		if strings.Contains(home, "rail-search") {
+			t.Error("the home page still renders a rail search form")
+		}
+		if !strings.Contains(home, `href="/search"`) {
+			t.Error("the home page does not link to /search")
 		}
 	})
 }

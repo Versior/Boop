@@ -113,7 +113,7 @@
   </symbol>
 </svg>
 
-<div class="app">
+<div class="app{{if .AIStatus.Text}} has-rail{{end}}">
 
   <!-- ========== 左栏 ========== -->
   <aside class="rail-left">
@@ -201,14 +201,15 @@
   </main>
 
   <!-- ========== 右栏 ========== -->
+  <!-- 这里曾有一个搜索框。搜索不需要第三个入口：左栏图标条上的“搜索”在宽屏可见，移动端
+       底部导航上的“搜索”在 700px 以下可见，两者都直接链到 /search，任何视口都够得着。
+       这一列现在只为作者状态卡片存在，而卡片只在首页渲染，所以没有卡片就没有这一列：留下
+       空的第三道轨会白占 336px，把中栏推到视觉中心的左边。 -->
+  {{if .AIStatus.Text}}
   <aside class="rail-right">
-    <form class="rail-search" action="/search" method="get" role="search">
-      <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg>
-      <label class="sr-only" for="rail-search-input">搜索 {{.SiteName}}</label>
-      <input class="rail-search-input" id="rail-search-input" name="q" type="search" value="{{.SearchQuery}}" placeholder="搜索 {{.SiteName}}" autocomplete="off" maxlength="100">
-    </form>
-    {{if .AIStatus.Text}}{{template "authorStatus" .AIStatus}}{{end}}
+    {{template "authorStatus" .AIStatus}}
   </aside>
+  {{end}}
 
 </div>
 
