@@ -354,7 +354,6 @@ func TestPrivatePagesAreNoIndex(t *testing.T) {
 		cookie bool
 		want   bool
 	}{
-		{"/search?q=hello", false, true},
 		{"/bookmarks", true, true},
 		{"/login", false, true},
 		{"/register", false, true},

@@ -201,7 +201,7 @@ func loadMigrations() ([]migration, error) {
 }
 
 // parseVersion reads the numeric prefix of a migration file name such as
-// 002_search.sql.
+// 001_initial.sql.
 func parseVersion(name string) (int, error) {
 	prefix, _, found := strings.Cut(name, "_")
 	if !found {

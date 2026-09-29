@@ -45,25 +45,35 @@ func markupBlock(t *testing.T, body, from, to string) string {
 	return rest[:end]
 }
 
-func TestBottomNavOffersSearch(t *testing.T) {
-	f := newAuthFixture(t)
+// TestBothBarsMarkTheCurrentDestination pins that each of the four front-end
+// destinations is flagged as current in *both* navigations. The desktop rail and
+// the mobile bar are the same four destinations in two shapes, so a page that
+// highlights itself in one and not the other leaves half the visitors with no
+// idea where they are. The count is asserted as well as the presence: exactly one
+// marked entry per bar, so a stray second cannot pass unnoticed. The count is
+// taken inside each navigation rather than over the whole document, because the
+// feed's content-type row marks itself current too and that row is neither bar.
+func TestBothBarsMarkTheCurrentDestination(t *testing.T) {
+	c := newContentFixture(t)
 
-	// The search field lives in the right rail, which is hidden below 1240px, so
-	// below that breakpoint the bottom bar is the only way to reach /search.
-	block := navBlock(t, f.do(t, http.MethodGet, "/", "", nil, nil).Body.String(), "bottom-nav")
-	if !strings.Contains(block, `href="/search"`) {
-		t.Errorf("the bottom navigation has no search entry:\n%s", block)
-	}
-
-	// Both bars mark the current section, so /search must not leave the mobile
-	// bar with nothing highlighted - which is what happened while the entry was
-	// missing from this bar only.
-	body := f.do(t, http.MethodGet, "/search?q=hello", "", nil, nil).Body.String()
-	if got := strings.Count(body, `aria-current="page"`); got != 2 {
-		t.Errorf("/search marks %d active navigation items, want 2", got)
-	}
-	if !strings.Contains(navBlock(t, body, "bottom-nav"), `aria-current="page"`) {
-		t.Error("the bottom navigation does not mark /search as current")
+	for _, page := range []struct {
+		name   string
+		target string
+	}{
+		{"feed", "/"},
+		{"articles", "/?type=article"},
+		{"photos", "/?type=photo"},
+		{"bookmarks", "/bookmarks"},
+	} {
+		t.Run(page.name, func(t *testing.T) {
+			body := c.do(t, http.MethodGet, page.target, "", nil, c.cookie).Body.String()
+			if got := strings.Count(navBlock(t, body, "nav"), `aria-current="page"`); got != 1 {
+				t.Errorf("GET %s marks %d rail items current, want 1", page.target, got)
+			}
+			if got := strings.Count(navBlock(t, body, "bottom-nav"), `aria-current="page"`); got != 1 {
+				t.Errorf("GET %s marks %d bottom-bar items current, want 1", page.target, got)
+			}
+		})
 	}
 }
 
@@ -92,7 +102,6 @@ func TestEveryPageCarriesOneToastSlot(t *testing.T) {
 		{"feed", "/", nil},
 		{"feed, signed in", "/", c.cookie},
 		{"detail", "/p/" + slug, nil},
-		{"search", "/search?q=提示", nil},
 		{"bookmarks", "/bookmarks", c.cookie},
 		{"login", "/login", nil},
 		{"register", "/register", nil},
@@ -165,11 +174,11 @@ func TestDetailPhotoIsNotCropped(t *testing.T) {
 // strip of seven identical circles with that name hidden, and three of the seven
 // were not destinations at all - a theme switch, a second copy of that switch,
 // and a link to /login that is a no-op for anyone already signed in. This pins
-// the shape it has now: five destinations, the switch and the account entries in
+// the shape it has now: four destinations, the switch and the account entries in
 // a control group below them, and the brand block left visible. The stylesheet
 // is read at the end because visibility is CSS's job and "no brand name next to
 // the logo" was a CSS bug.
-func TestTheFrontRailNamesTheBrandAndKeepsFiveDestinations(t *testing.T) {
+func TestTheFrontRailNamesTheBrandAndKeepsFourDestinations(t *testing.T) {
 	f := newContentFixture(t)
 
 	page := func(cookie *http.Cookie) string {
@@ -217,14 +226,14 @@ func TestTheFrontRailNamesTheBrandAndKeepsFiveDestinations(t *testing.T) {
 		t.Error("the wordmark symbol has a non-zero viewBox origin, which hides it when drawn through <use>")
 	}
 	nav := navBlock(t, guest, "nav")
-	if got := strings.Count(nav, `class="nav-item`); got != 5 {
-		t.Errorf("the rail navigation has %d entries, want 5:\n%s", got, nav)
+	if got := strings.Count(nav, `class="nav-item`); got != 4 {
+		t.Errorf("the rail navigation has %d entries, want 4:\n%s", got, nav)
 	}
 	// The switch and the account entries are controls, not destinations, so none
 	// of them belongs inside the navigation element.
 	for _, unwanted := range []string{"外观", "我的", "登录", "退出登录"} {
 		if strings.Contains(nav, unwanted) {
-			t.Errorf("the rail navigation offers %s, which is not one of the five", unwanted)
+			t.Errorf("the rail navigation offers %s, which is not one of the four", unwanted)
 		}
 	}
 	if strings.Contains(nav, "data-theme-toggle") {
@@ -319,7 +328,6 @@ func TestSignedInPagesOfferSignOut(t *testing.T) {
 		{"reader on bookmarks", "/bookmarks", reader, true, false},
 		{"owner on the feed", "/", c.cookie, true, true},
 		{"owner on bookmarks", "/bookmarks", c.cookie, true, true},
-		{"owner on search", "/search?q=退出", c.cookie, true, true},
 		{"owner on admin comments", "/admin/comments", c.cookie, true, true},
 		{"owner on admin settings", "/admin/settings/ai", c.cookie, true, true},
 	}
@@ -365,7 +373,7 @@ func TestSignedInPagesOfferSignOut(t *testing.T) {
 
 // TestTheTwoSurfacesKeepTheirOwnNavigation pins the boundary between the front
 // end and the back end. The back end used to render the front end's shell: the
-// same icon rail (首页/搜索/文章/摄影/收藏) and the same mobile bar, which made a
+// same icon rail (首页/文章/摄影/收藏) and the same mobile bar, which made a
 // management page look like the feed and offered entries that mean nothing
 // there. The shell swaps one navigation for the other, and this is what keeps
 // the two from trading parts again.
@@ -383,7 +391,6 @@ func TestTheTwoSurfacesKeepTheirOwnNavigation(t *testing.T) {
 		`class="rail-left"`,
 		`class="nav-item`,
 		`class="bottom-nav" aria-label="移动端导航"`,
-		`href="/search"`,
 		`href="/bookmarks"`,
 		`href="/?type=article"`,
 		`href="/?type=photo"`,
@@ -418,7 +425,7 @@ func TestTheTwoSurfacesKeepTheirOwnNavigation(t *testing.T) {
 		})
 	}
 
-	front := []string{"/", "/p/" + slug, "/search?q=两套"}
+	front := []string{"/", "/p/" + slug}
 	for _, target := range front {
 		t.Run("front end"+target, func(t *testing.T) {
 			body := c.do(t, http.MethodGet, target, "", nil, nil).Body.String()

@@ -39,6 +39,18 @@ func pragmaValue(t *testing.T, db *sql.DB, name string) string {
 	return value
 }
 
+// schemaObjectCount counts objects of one kind in sqlite_master by name. It is
+// used to assert that something is absent as well as present: a dropped index
+// that comes back is a regression the same way a missing table is.
+func schemaObjectCount(t *testing.T, db *sql.DB, kind, name string) int {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = ? AND name = ?`, kind, name).Scan(&count); err != nil {
+		t.Fatalf("inspect %s %s: %v", kind, name, err)
+	}
+	return count
+}
+
 func TestOpenCreatesDataDirectoryAndPragmas(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "deeper", "boop.db")
 
@@ -77,7 +89,7 @@ func TestMigrateCreatesDocumentedSchema(t *testing.T) {
 	tables := []string{
 		"schema_migrations", "users", "oauth_accounts", "sessions", "posts", "assets",
 		"post_assets", "tags", "post_tags", "comments", "likes", "bookmarks",
-		"settings", "secret_settings", "ai_cache", "post_search",
+		"settings", "secret_settings", "ai_cache",
 	}
 	for _, name := range tables {
 		var kind string
@@ -91,6 +103,21 @@ func TestMigrateCreatesDocumentedSchema(t *testing.T) {
 		}
 		if kind != "table" {
 			t.Errorf("%s is a %s, want table", name, kind)
+		}
+	}
+
+	// 005 removed the FTS index and the three triggers that fed it, because the
+	// site has no search and a trigger outlives its reader: it would keep firing
+	// on every insert, update and delete of posts forever. Absence is asserted,
+	// not merely left out of the list above, because both halves of that pair
+	// are things a future edit could quietly bring back. This holds for a fresh
+	// install and for an upgrade alike - DROP IF EXISTS runs either way.
+	if got := schemaObjectCount(t, db, "table", "post_search"); got != 0 {
+		t.Errorf("post_search is back in the schema: %d", got)
+	}
+	for _, name := range []string{"posts_search_insert", "posts_search_update", "posts_search_delete"} {
+		if got := schemaObjectCount(t, db, "trigger", name); got != 0 {
+			t.Errorf("trigger %s still fires on every write to posts", name)
 		}
 	}
 
@@ -110,19 +137,8 @@ func TestMigrateCreatesDocumentedSchema(t *testing.T) {
 		}
 	}
 
-	triggers := []string{"posts_search_insert", "posts_search_update", "posts_search_delete"}
-	for _, name := range triggers {
-		var count int
-		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'trigger' AND name = ?`, name).Scan(&count); err != nil {
-			t.Fatalf("inspect trigger %s: %v", name, err)
-		}
-		if count != 1 {
-			t.Errorf("trigger %s is missing", name)
-		}
-	}
-
-	if got := LatestVersion(); got != 4 {
-		t.Errorf("LatestVersion() = %d, want 4", got)
+	if got := LatestVersion(); got != 5 {
+		t.Errorf("LatestVersion() = %d, want 5", got)
 	}
 	version, err := CurrentVersion(context.Background(), db)
 	if err != nil {
@@ -389,62 +405,6 @@ func TestAssetContentHashIsUniquePerOwner(t *testing.T) {
 	}
 	if err := insert(2, "2026/09/three.jpg"); err != nil {
 		t.Errorf("the same bytes were rejected for another owner: %v", err)
-	}
-}
-
-func TestFTSSyncFollowsPostChanges(t *testing.T) {
-	db := migratedDB(t)
-	ctx := context.Background()
-	now := "2026-09-28T00:00:00Z"
-
-	searchCount := func(term string) int {
-		t.Helper()
-		var count int
-		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM post_search WHERE post_search MATCH ?`, term).Scan(&count); err != nil {
-			t.Fatalf("search %q: %v", term, err)
-		}
-		return count
-	}
-
-	if _, err := db.ExecContext(ctx, `INSERT INTO posts(id, slug, type, status, title, body_markdown, excerpt, created_at, updated_at)
-		VALUES(1,'coastline','photo','published','Coastline in the mist','fog rolls over the sea','雾海',?,?)`, now, now); err != nil {
-		t.Fatalf("insert post: %v", err)
-	}
-	if got := searchCount("coastline"); got != 1 {
-		t.Errorf("title match = %d, want 1", got)
-	}
-	if got := searchCount("sea"); got != 1 {
-		t.Errorf("body match = %d, want 1", got)
-	}
-
-	if _, err := db.ExecContext(ctx, `UPDATE posts SET body_markdown = 'city lights at night' WHERE id = 1`); err != nil {
-		t.Fatalf("update body: %v", err)
-	}
-	if got := searchCount("sea"); got != 0 {
-		t.Errorf("stale body term still matches: %d", got)
-	}
-	if got := searchCount("lights"); got != 1 {
-		t.Errorf("updated body term = %d, want 1", got)
-	}
-
-	if _, err := db.ExecContext(ctx, `UPDATE posts SET title = 'Harbour lights' WHERE id = 1`); err != nil {
-		t.Fatalf("update title: %v", err)
-	}
-	if got := searchCount("coastline"); got != 0 {
-		t.Errorf("stale title term still matches: %d", got)
-	}
-	if got := searchCount("harbour"); got != 1 {
-		t.Errorf("updated title term = %d, want 1", got)
-	}
-
-	if _, err := db.ExecContext(ctx, `DELETE FROM posts WHERE id = 1`); err != nil {
-		t.Fatalf("delete post: %v", err)
-	}
-	if got := searchCount("harbour"); got != 0 {
-		t.Errorf("deleted post still matches: %d", got)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO post_search(post_search) VALUES('integrity-check')`); err != nil {
-		t.Fatalf("FTS integrity check failed: %v", err)
 	}
 }
 

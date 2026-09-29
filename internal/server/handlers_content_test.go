@@ -59,6 +59,43 @@ func (f *authFixture) readerFixture(t *testing.T) (*http.Cookie, string) {
 	return sessionCookie(t, rec), decodeData(t, rec)["csrf_token"].(string)
 }
 
+// insertPost writes one post row directly, so a test can control status and
+// published_at exactly instead of going through an owner create request. Every
+// reading surface filters on `status = 'published' AND deleted_at IS NULL`, so
+// the draft, archived and soft-deleted rows this can write are exactly what
+// proves that filter works.
+func (f *authFixture) insertPost(t *testing.T, slug, kind, status, title, body, excerpt, publishedAt string) int64 {
+	t.Helper()
+	var published any
+	if publishedAt != "" {
+		published = publishedAt
+	}
+	stamp := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := f.db.Exec(
+		`INSERT INTO posts(slug, type, status, title, body_markdown, body_html, excerpt, published_at, created_at, updated_at)
+		 VALUES(?,?,?,?,?,'',?,?,?,?)`,
+		slug, kind, status, title, body, excerpt, published, stamp, stamp)
+	if err != nil {
+		t.Fatalf("insert post %s: %v", slug, err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("post id: %v", err)
+	}
+	return id
+}
+
+// softDeletePost flips deleted_at and nothing else. A soft delete has to hide
+// the row from every reading surface while leaving the row itself recoverable,
+// so tests need both states of one row, not two rows.
+func (f *authFixture) softDeletePost(t *testing.T, slug string) {
+	t.Helper()
+	if _, err := f.db.Exec(`UPDATE posts SET deleted_at = ? WHERE slug = ?`,
+		time.Now().UTC().Format(time.RFC3339Nano), slug); err != nil {
+		t.Fatalf("soft delete %s: %v", slug, err)
+	}
+}
+
 func (c *contentFixture) post(t *testing.T, target, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	return c.postSameOrigin(t, target, body, c.cookie, map[string]string{"X-CSRF-Token": c.csrf})

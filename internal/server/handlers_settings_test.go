@@ -436,20 +436,6 @@ func TestPublishedBrandComesFromSettings(t *testing.T) {
 			t.Errorf("the home page is missing %s", want)
 		}
 	}
-	// The right rail carries no search form any more, so the search page owns the
-	// only search label and placeholder. The brand still has to reach them.
-	search := f.do(t, http.MethodGet, "/search", "", nil, cookie)
-	if search.Code != http.StatusOK {
-		t.Fatalf("search: status = %d, want 200", search.Code)
-	}
-	for _, want := range []string{
-		`<label class="sr-only" for="search-input">搜索 少爷的博客</label>`,
-		`placeholder="搜索 少爷的博客"`,
-	} {
-		if !strings.Contains(search.Body.String(), want) {
-			t.Errorf("the search page is missing %s", want)
-		}
-	}
 	// The configured name replaced the built-in one everywhere on this page.
 	if strings.Contains(body, "Boop") {
 		t.Error("the home page still renders the built-in brand name")

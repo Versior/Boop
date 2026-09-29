@@ -12,7 +12,7 @@
   <a href="https://github.com/Versior/Boop/stargazers"><img alt="GitHub Stars" src="https://img.shields.io/github/stars/Versior/Boop?style=flat-square&color=0f1419"></a>
   <a href="https://github.com/Versior/Boop/commits/main"><img alt="Last Commit" src="https://img.shields.io/github/last-commit/Versior/Boop?style=flat-square&color=1d9bf0"></a>
   <img alt="Go" src="https://img.shields.io/badge/Go-1.27-00ADD8?style=flat-square&logo=go&logoColor=white">
-  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-FTS5-003B57?style=flat-square&logo=sqlite&logoColor=white">
+  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white">
   <img alt="No Node.js" src="https://img.shields.io/badge/Node.js-not_required-339933?style=flat-square&logo=nodedotjs&logoColor=white">
 </p>
 
@@ -41,7 +41,7 @@ Boop 只有站长发布内容，信息层级清晰、紧凑；读者可以注册
 - **身份认证** — 邮箱密码、GitHub OAuth、后台注册开关
 - **AI 能力** — 作者状态总结、文章摘要、标签与 SEO 建议；建议不会自动覆盖草稿
 - **媒体管理** — 图片上传、真实类型检测、大小限制与内容去重；可按需存到本地目录或兼容 S3 的对象存储（如 Cloudflare R2）
-- **内容发现** — SQLite FTS5 全文搜索、结果页高亮与游标分页、RSS 2.0
+- **内容发现** — RSS 2.0 订阅、sitemap 与 robots、社交分享卡片
 - **站点体验** — 浅色/深色主题、响应式三栏布局、后台集中配置
 - **安全基础** — CSRF、防开放重定向、加密保存第三方密钥、安全 Cookie 配置
 
@@ -50,7 +50,7 @@ Boop 只有站长发布内容，信息层级清晰、紧凑；读者可以注册
 Boop 面向 `1 vCPU / 500MB–1GB RAM` 的个人服务器：一个 Go 进程、一个 SQLite 数据库和一个上传目录即可运行。图片可以改存到兼容 S3 的对象存储（见 [`docs/STORAGE.md`](docs/STORAGE.md)），此时浏览器直接从对象存储取图，不占用本机带宽。AI 请求按需发生且带缓存，不需要常驻任务队列或定时任务。
 
 ```text
-Browser ──> Go SSR + JSON API ──> SQLite (WAL + FTS5)
+Browser ──> Go SSR + JSON API ──> SQLite (WAL)
                   │
                   ├──> Local uploads
                   ├──> S3-compatible bucket (optional)
@@ -62,7 +62,7 @@ Browser ──> Go SSR + JSON API ──> SQLite (WAL + FTS5)
 ### 环境要求
 
 - Go `1.27+`
-- 支持 SQLite FTS5 的目标平台
+- 支持 SQLite 的目标平台
 
 ### 1. 获取代码
 
@@ -103,7 +103,7 @@ go run ./cmd/boop serve
 | 层 | 方案 |
 | --- | --- |
 | 服务端 | Go `net/http`、`html/template`、embedded assets |
-| 数据 | SQLite、WAL、FTS5、单进程写入模型 |
+| 数据 | SQLite、WAL、单进程写入模型 |
 | 内容 | goldmark + bluemonday |
 | 前端 | 原生 CSS / JavaScript，无独立前端服务 |
 | AI | OpenAI-compatible API，可选启用、访问触发、结果缓存 |
@@ -135,7 +135,7 @@ git diff --check
 - [数据库与事务规则](docs/DATABASE.md)
 - [MVP 实施计划](docs/superpowers/plans/2026-09-28-boop-mvp.md)
 - [AI 实施约束](docs/superpowers/task8-ai-implementation-brief.md)
-- [搜索与 RSS 实施约束](docs/superpowers/task9-search-rss-implementation-brief.md)
+- [搜索与 RSS 实施约束（历史，站内搜索已移除）](docs/superpowers/task9-search-rss-implementation-brief.md)
 - [智能体接手指南](AGENTS.md)
 
 ## 🗺️ 项目状态

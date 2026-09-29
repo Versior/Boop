@@ -11,28 +11,15 @@
 | GET | `/api/v1/posts?type=&cursor=&limit=` | 已发布信息流；`type` 为 article/photo，空值含动态 |
 | GET | `/api/v1/posts/{slug}` | 内容详情、点赞数、评论数和当前用户状态 |
 | GET | `/api/v1/posts/{slug}/comments` | 仅已批准评论，按时间正序嵌套一级回复 |
-| GET | `/api/v1/search?q=&cursor=&limit=` | SQLite FTS 关键词搜索，返回 `{"data":[...],"next_cursor":"..."}` |
 | GET | `/api/v1/ai/author-status` | 作者状态缓存：text、topics、generated_at、stale、default；只读缓存，不同步调用模型 |
 | GET | `/feed.xml` | RSS 2.0，最新 50 条已发布内容 |
 | GET | `/robots.txt` | 抓取规则与 sitemap 声明，绝对地址只由 `BOOP_BASE_URL` 生成 |
 | GET | `/sitemap.xml` | 首页 + **每一条**已发布内容，逐条带 `lastmod` |
 | GET | `/static/*` | 嵌入的 CSS/JS/SVG；带内容版本号，一年不可变缓存 + gzip 协商 |
 
-## 搜索与 RSS
+## RSS
 
-搜索规则（`GET /api/v1/search`，公开）：
-
-- 查询词只取 Unicode 字母与数字，其余字符（引号、`*`、`(`、`)`、`-`、`^`、`:` 等 FTS5 语法字符）都是分隔符，会被丢弃；每个词各自加引号后再用 `AND` 连接，词序即输入顺序，大小写不敏感去重。因此输入永远无法注入或改变 FTS5 的查询结构，`OR`、`NEAR`、`NOT` 只会被当成普通词。
-- 空白或只有标点的 `q` **不是错误**：直接返回 `{"data":[],"next_cursor":""}`，且不执行任何 `MATCH`（`MATCH ''`、`MATCH '!!!'` 在 SQLite 里是语法错误，服务端不会把它变成 500）。
-- **检索有两条路径，由查询词的字符集决定。** FTS5 的 `unicode61` 分词器把一整段连续的 CJK（汉字、假名、谚文）当成**一个 token**，所以它匹配不到出现在「一段待评论的动态」里的「评论」——中文本来就不分词写。因此含 CJK 的查询改走**子串检索**：在 `posts` 的 `title` / `excerpt` / `body_markdown` 三列上按 `LIKE '%词%'` 匹配，每个词都必须出现（与 FTS 路径的 `AND` 等价）。中国用户绝大多数查询都含中文，所以这是主要的检索路径，不是兜底。
-- 不含 CJK 的查询仍走 FTS5 索引，语义没有变：`Google` 能命中，`oogle` 不能。**子串检索的代价说清楚**：它要读已发布行（实测计划为 `SEARCH p USING INDEX idx_posts_feed (status=?)`，不退化成临时 B 树排序），没有 bm25 分数，混排查询里的拉丁词也按子串匹配；命中稀疏到走不完一页时，成本随语料增长（实测数字见 `docs/DATABASE.md`）。语料规模大到这一步不再划算时，修法是给 FTS 索引加 CJK 二元组（bigram）分词。
-- 两条路径共用同一套游标、排序与页大小，`next_cursor` 的语义与翻页行为完全一致：翻页不会重复或漏行。相邻的中文不拆词，整串当一个词查（「今天评论」找的是这个字面串，不会拆成「今天」+「评论」）；要用两个字面串做「与」，在它们之间加空格或标点即可。
-- `q` 超过 100 个字符返回 400 `invalid_query`；`limit` 默认 20、最大 50，非法值返回 400 `invalid_limit`；游标非法返回 400 `invalid_cursor`。
-- 只返回 `status='published'` 且 `deleted_at IS NULL` 的内容，按 `published_at DESC, id DESC` 稳定排序，游标沿用公共信息流的 `<published_at,id>` 格式（不接受评分游标），因此翻页不会重复或漏行；bm25 分数只作为服务端内部字段，不出现在响应里、也不参与排序。
-- 结果字段是未来 AI 检索复用的最小集：`id`、`slug`、`type`、`title`、`excerpt`、`snippet`、`url`、`published_at`、`updated_at`。**不返回**正文、图片、标签、点赞与评论。`slug` 是存储的原文标识符（`Slugify` 保留 CJK），`url` 是 `/p/{slug}` 并把 slug 按**单段路径**百分号编码后的地址——字段名说的是地址，地址就必须是转义后的 URI，而这份 JSON 不经过 `html/template`，没有任何一层会替你转义。`/feed.xml` 与 `/sitemap.xml` 用同一条规则（那里是绝对地址）。
-- `snippet` 是**纯文本**片段，取自匹配最佳的那一列（标题、正文或摘要），因此只在标题或摘要命中的结果同样能看到命中词被高亮，而不是一段与命中无关的正文开头；命中词由两个控制字符（U+0002 / U+0003）包裹。FTS 路径用 `snippet(post_search, -1, …)`，子串路径在应用层按**同样的列优先级**取列并插入**同样的标记**，窗口为命中前后共 80 个字符，被截断的一侧以 `…` 收尾，两条路径的输出随后都被同一个 240 字符上限收口。
-- SSR 页面不把片段当 HTML：服务端只按这两个标记把片段切成**纯文本片段数组**，模板静态输出 `<mark>`，每段文本仍由 `html/template` 自动转义。即便存储正文里本来就有 U+0002 / U+0003，最坏结果只是多一对高亮，不可能注入 HTML 或破坏标签结构。
-- `/api/v1/search` 子树永远是 JSON：未知子路径 404 `not_found`，错误方法 405 `method_not_allowed` 且带 `Allow: GET`。
+站内搜索已移除。曾经有 `GET /api/v1/search` 与 `GET /search`，它们连同 `internal/search` 包、`handlers_search.go` 与 `web/templates/search.html` 一起删除；`/api/v1/search` 现在落到通用 API 404（`{"error":{"code":"not_found",...}}`），`/search` 落到统一 404 HTML 页。数据库侧的 FTS5 表 `post_search` 与它的三个触发器也由迁移 005 删除（见 `docs/DATABASE.md`）。
 
 RSS 规则（`GET /feed.xml`，公开）：
 
@@ -49,8 +36,8 @@ RSS 规则（`GET /feed.xml`，公开）：
 
 `robots.txt` 规则：
 
-- 输出 `User-agent: *`、`Allow: /` 和一组 `Disallow`：`/admin`、`/api/`、`/auth/`、`/search`、`/bookmarks`、`/login`、`/register`。规则按最长前缀匹配，所以一条 `Allow: /` 就让其余路径都可抓，只有这几条留在外面。
-- `/search` 被排除，是因为它的结果集随查询串无限展开，且每次抓取都要跑一次全文检索；`/bookmarks` 是逐访客的页面，对爬虫没有意义。
+- 输出 `User-agent: *`、`Allow: /` 和一组 `Disallow`：`/admin`、`/api/`、`/auth/`、`/bookmarks`、`/login`、`/register`。规则按最长前缀匹配，所以一条 `Allow: /` 就让其余路径都可抓，只有这几条留在外面。
+- `/bookmarks` 是逐访客的页面，对爬虫没有意义。
 - `Sitemap:` 必须是绝对地址，只由 `BOOP_BASE_URL` 生成，**永不**读请求 Host 或 `X-Forwarded-*`：否则任何能发请求的人都能让本进程向所有爬虫宣告别人的源站。
 
 `sitemap.xml` 规则：
@@ -224,7 +211,6 @@ AI 接口规则：
   - 类型行（`.type-tabs`）只列信息流接口真正接受的三个筛选值——全部 `/`、文章 `/?type=article`、摄影 `/?type=photo`——每一项带**已发布内容条数**（一条 `GROUP BY type` 的真实 COUNT，与 `Feed` 同一条可见性规则：草稿、归档与软删除都不计入）。动态没有自己的入口，因为动态只出现在不筛选的信息流里（`docs/PRODUCT.md` §5.1）；因此这一行不会出现服务端会以 400 回绝的筛选值。条数是这一行存在的理由：左栏与底部导航已经能走到同样的三个视图。
   - 作者头部只画在信息流的第一页：带 `cursor` 的续页不重复它，但类型行照画（它同时是回到顶部的那条路，且条数描述整个站点而不是这一页）。
 - `GET /p/{slug}` 内容详情 SSR。
-- `GET /search?q=&cursor=` 搜索结果 SSR：空查询是提示态，无结果（含只有标点的查询）是带转义查询词的空态，翻页用同源“加载更多”链接并保留 `q`；左栏“搜索”项在 `/search` 高亮，移动端底部导航不变。有结果时文案是“本页 N 条”，因为服务端没有 COUNT 查询、`len` 只是本页数量，不冒充总数。
 - 每个页面的 `<head>` 都带 `<link rel="alternate" type="application/rss+xml" href="/feed.xml">` 发现链接。
 - `GET /login`、`GET /register`。
 - `GET /bookmarks` 登录用户收藏；游客重定向到 `/login`。
@@ -236,7 +222,7 @@ AI 接口规则：
 
 品牌与头像：
 
-- `site_name`、`site_description`、`site_avatar_url` 注入所有页面的外壳：标题后缀、桌面与移动品牌、品牌 `aria-label`、搜索页输入框的标签与占位符、默认 `meta description`，以及首页可见文案（`sr-only` 标题与底部说明）。页面外壳不再硬编码任何品牌名。`site_cover_url` 不进外壳，它只画在首页作者头部与索引页的链接预览里。品牌名末尾那颗蓝色圆点是 CSS 伪元素（`.brand-name::after`）而不是文字，所以站名换成任何别的内容，这个记号都跟着，也不需要模板改动。
+- `site_name`、`site_description`、`site_avatar_url` 注入所有页面的外壳：标题后缀、桌面与移动品牌、品牌 `aria-label`、默认 `meta description`，以及首页可见文案（`sr-only` 标题与底部说明）。页面外壳不再硬编码任何品牌名。`site_cover_url` 不进外壳，它只画在首页作者头部与索引页的链接预览里。品牌名末尾那颗蓝色圆点是 CSS 伪元素（`.brand-name::after`）而不是文字，所以站名换成任何别的内容，这个记号都跟着，也不需要模板改动。
 - 站名仍等于出厂名（`settings.Defaults().SiteName`）时 `pageView.SiteWordmark` 为真，外壳改画内联字标 `#i-wordmark`、不排版站名；这是字标本身的限制，不是样式偏好——它拼的是「Boop」这一个词，只能替这一个词，站名一改就必须退回排版，否则页面会对一个不属于自己的名字招人。字标那条把站名留在无障碍树里（`.sr-only`），`aria-label` 仍然是站名，所以链接在两种面孔下都有名字。两副面孔写在 base.html 最外层的 `brand-mark` / `brand-type` 两个模板片段里（Go 模板不允许 define 套 define，而 base.html 整份都在 `base` 这一个 define 内）。
 - 渲染头像的优先级是 `site_avatar_url` → 站长账号 `users.avatar_url` → 内置 SVG，用于快捷发布、信息流卡片、收藏卡片与内容详情。页面 `<link rel="icon">` 用另一条链：`site_icon_url` → `site_avatar_url` → 内置 SVG 图标，因此标签页图标可以独立于头像配置。两条链互不影响。CSP 的 `img-src` 为 `'self' data: http: https:`，否则配置的绝对地址会被浏览器直接拦掉；脚本、样式与连接仍然是同源（`script-src 'self'`、`connect-src 'self'`）。
 - 展示路径读取设置失败时回退到默认值并写一条告警（页面仍然可用）；而设置表单和写入路径在设置损坏时返回 500 / 4xx，避免把默认值写回去覆盖真实设置。
@@ -250,5 +236,5 @@ AI 接口规则：
 - 描述优先 `posts.seo_description`，否则摘要，否则正文里**读者能看到的文本**。文章正文走的是与 RSS 描述同一条 goldmark + bluemonday 管线：把已被净化掉的 `<script>` 先还原成摘要文本再发出来，等于把写入时清掉的内容又放回机器可读副本里；标题回退同样取可见文本，所以 `## 小标题` 不会连着井号一起进 `<h1>`。
 - 结构化数据是 `<script type="application/ld+json">` 数据块：首页是 `WebSite`（搜索引擎据此取站点名），文章是 `BlogPosting`，动态与摄影是 `SocialMediaPosting`——Google 的 Article 指引明确要求不是文章的内容不要标记成文章，schema.org 也为“信息流里的帖文”提供了这个子类型。
 - 该数据块**不受 `script-src 'self'` 限制**，也不需要 nonce 或 `unsafe-inline`：HTML 规范在 “prepare the script element” 里先按 `type` 判定脚本类型，不是 JavaScript MIME 类型的元素会在此之前直接返回，而 CSP 的内联检查发生在其后的步骤，因此浏览器把它当作纯数据块，根本走不到 CSP 检查。内容由 `encoding/json` 生成，`<`、`>`、`&` 与 U+2028/U+2029 已转义为 `\uXXXX`，所以标题里写 `</script>` 也闭合不了该元素。
-- `/search`、`/bookmarks`、`/login`、`/register`、`/admin*` 带 `<meta name="robots" content="noindex, nofollow">`。这些路径同时被 robots.txt 排除：规则让守规矩的爬虫省下一次请求，noindex 覆盖不守规矩的。
+- `/bookmarks`、`/login`、`/register`、`/admin*` 带 `<meta name="robots" content="noindex, nofollow">`。这些路径同时被 robots.txt 排除：规则让守规矩的爬虫省下一次请求，noindex 覆盖不守规矩的。
 

@@ -29,15 +29,12 @@ const sitemapLimit = 50000
 // matched by longest prefix, so the single "Allow: /" written below is what
 // keeps every other path crawlable while these stay out.
 //
-// /admin, /api and /auth are the private surface. /search is excluded because
-// its result set is unbounded per query string and every crawl of it costs a
-// full-text scan. /bookmarks is per-visitor. /login and /register are forms that
-// only make sense to a human.
+// /admin, /api and /auth are the private surface. /bookmarks is per-visitor.
+// /login and /register are forms that only make sense to a human.
 var robotsDisallow = []string{
 	"/admin",
 	"/api/",
 	"/auth/",
-	"/search",
 	"/bookmarks",
 	"/login",
 	"/register",

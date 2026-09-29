@@ -42,7 +42,7 @@
 
 - Tasks 1–7：基础服务、SQLite、认证、内容、上传、互动、后台设置与 GitHub OAuth。
 - Task 8：AI 作者状态与写作助手。
-- Task 9：FTS5 搜索和 RSS 2.0。
+- Task 9：RSS 2.0（该任务曾附带一套 SQLite FTS5 站内搜索，已按站长要求整体移除：页面、API、`internal/search` 包与 FTS 表都不在代码里）。
 - 当前下一项：Task 10 发布交付。
 
 Task 8/9 的具体约束已经保存在：

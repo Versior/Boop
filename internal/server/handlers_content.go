@@ -34,11 +34,11 @@ const (
 // The pages need no help from this: html/template already percent-encodes an
 // href, so a view model keeps handing it the raw path and the template's
 // escaping is the layer that owns that context. The outputs that no template
-// escapes do need it, and they are the reason this function exists: the search
-// JSON payload, and the sitemap and the feed, where encoding/xml only escapes
-// the five XML entities and leaves the value otherwise untouched. Those two
-// documents used to publish raw Chinese addresses that the sitemap protocol
-// does not permit and that a reader's GUID could not open.
+// escapes do need it, and they are the reason this function exists: the sitemap
+// and the feed, where encoding/xml only escapes the five XML entities and
+// leaves the value otherwise untouched. Those documents used to publish raw
+// Chinese addresses that the sitemap protocol does not permit and that a
+// reader's GUID could not open.
 //
 // PathEscape rather than a whole-path escape, because a slug is one segment: a
 // slash inside one must not survive as a separator.

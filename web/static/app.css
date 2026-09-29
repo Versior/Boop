@@ -139,9 +139,9 @@ h1,h2,h3,p{margin:0}
 .main{min-width:0;min-height:100vh;min-height:100dvh}
 
 /* ---------- 5. 左栏 ---------- */
-/* 左栏是图标栏：品牌在最上面，五个目的地在中间，控件组在最下面，三者都居中。
+/* 左栏是图标栏：品牌在最上面，四个内容目的地在中间，控件组在最下面，三者都居中。
    导航**不带文字**——文字留在无障碍树里，鼠标有 title 提示；只有品牌名是可见文字。
-   五项而不是七项：外观是开关不是页面，归控件组；「我的」对已登录的人只是空跳转，
+   四项而不是七项：外观是开关不是页面，归控件组；「我的」对已登录的人只是空跳转，
    也归控件组，未登录时才出现，并且就叫「登录」。 */
 .rail-top{width:100%}
 .brand{
@@ -718,51 +718,6 @@ button.action:disabled{opacity:.6;cursor:default}
 .admin-item-post a{color:var(--accent)}
 .admin-actions{display:flex;gap:14px;margin-top:10px}
 
-/* ---------- 7.5.1 搜索页（中栏搜索行 + 克制结果流） ---------- */
-.search-head{padding:12px var(--pad);border-bottom:1px solid var(--line)}
-.search-form{display:flex;align-items:center;gap:8px}
-.search-field{
-  display:flex;align-items:center;gap:10px;flex:1;min-width:0;
-  height:44px;padding:0 15px;
-  border:1px solid var(--line-strong);border-radius:999px;
-  background:var(--bg-soft);color:var(--muted);
-  transition:border-color .12s ease,color .12s ease;
-}
-.search-field:focus-within{border-color:var(--accent);color:var(--ink)}
-.search-field .ic{color:var(--muted-2)}
-.search-field:focus-within .ic{color:var(--muted)}
-.search-input{
-  flex:1;min-width:0;padding:0;margin:0;
-  border:0;background:none;
-  color:var(--ink);font:inherit;font-size:15px;
-}
-.search-input::placeholder{color:var(--muted-2)}
-.search-input:focus-visible{outline-offset:4px}
-.search-submit{
-  display:inline-flex;align-items:center;justify-content:center;
-  height:44px;padding:0 20px;border-radius:999px;
-  background:var(--accent);color:var(--on-accent);
-  font-size:14px;font-weight:700;
-  transition:opacity .12s ease;
-}
-.search-submit:hover{opacity:.9}
-
-.result{border-bottom:1px solid var(--line);transition:background .12s ease}
-.result:hover{background:var(--hover)}
-.result-link{display:block;padding:var(--pad);color:inherit}
-.result-head{display:flex;align-items:center;gap:8px;font-size:13px;line-height:20px}
-.result-head time{color:var(--muted)}
-.result-title{margin-top:6px;font-size:16px;font-weight:700;line-height:1.35;letter-spacing:-.01em}
-.result-snippet{
-  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;
-  margin-top:5px;
-  color:var(--muted);font-size:14px;line-height:1.6;word-break:break-word;
-}
-.result-snippet mark{
-  padding:0 2px;border-radius:3px;
-  background:var(--accent-soft);color:var(--ink);font-weight:600;
-}
-
 /* ---------- 7.6 轻提示 ---------- */
 .toast{
   position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));z-index:40;
@@ -889,7 +844,7 @@ button.action:disabled{opacity:.6;cursor:default}
   .status-mobile{display:block;padding:14px var(--pad) 16px;border-bottom:1px solid var(--line)}
 }
 
-/* 两套侧栏都在 899px 以下收起：侧栏和中栏在这个宽度里放不下（前台 240 + 600 = 840，
+/* 两套侧栏都在 899px 以下收起：侧栏和中栏在这个宽度里放不下（前台 180 + 600 = 780，
    后台 230 + 600 = 830）。收起之后两套界面都只剩中栏，导航交给顶栏与底部导航——底部导航
    本来只在窄屏出现，正好接上侧栏让出来的那部分。 */
 @media (max-width:899px){

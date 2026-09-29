@@ -83,7 +83,7 @@ func (s *server) pageMetaOf(r *http.Request) pageMeta {
 // asked to honour.
 func isPrivatePath(path string) bool {
 	switch path {
-	case "/search", "/bookmarks", "/login", "/register":
+	case "/bookmarks", "/login", "/register":
 		return true
 	default:
 		return strings.HasPrefix(path, "/admin")
