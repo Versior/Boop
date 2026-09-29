@@ -43,6 +43,7 @@ func TestDefaultsMatchDocumentedValues(t *testing.T) {
 		AIChatModel:               "",
 		AIEmbeddingModel:          "",
 		AIAuthorStatusTTLHours:    168,
+		StorageMode:               StorageModeLocal,
 	}
 	if got != want {
 		t.Errorf("Defaults() = %+v, want %+v", got, want)
@@ -106,6 +107,49 @@ func TestSeedWritesEveryDocumentedKeyOnce(t *testing.T) {
 		if got != value {
 			t.Errorf("settings[%s] = %s, want %s", key, got, value)
 		}
+	}
+}
+
+// The storage category is the one part of the schema Seed must leave alone: an
+// absent row is how a site knows it has never saved that category and must keep
+// following BOOP_R2_*. Seeding it would erase that fact, and a deployment whose
+// credentials cannot be imported would quietly start writing new uploads to the
+// local directory while its published images live in a bucket.
+func TestSeedLeavesTheStorageCategoryAlone(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	if err := Seed(ctx, db); err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+
+	rows, err := db.QueryContext(ctx, `SELECT key FROM settings WHERE key LIKE 'storage.%'`)
+	if err != nil {
+		t.Fatalf("query settings: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		t.Errorf("Seed wrote %s, want the storage category untouched", key)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate: %v", err)
+	}
+
+	// An unseeded category still loads as the documented default, so a page
+	// and a media path both see a local directory rather than an empty mode.
+	values, err := Load(ctx, db)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if values.StorageMode != StorageModeLocal {
+		t.Errorf("StorageMode = %q, want %q", values.StorageMode, StorageModeLocal)
+	}
+	if values.Storage().Object() {
+		t.Error("a site with no storage rows reports the object backend")
 	}
 }
 

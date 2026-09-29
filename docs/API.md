@@ -167,12 +167,12 @@ GitHub 登录规则：
 - 文件类型由字节推断（`http.DetectContentType`），不信任客户端 MIME：扩展名与内容不符返回 400 `invalid_filename`，内容不是 jpg/png/webp/gif 返回 415 `unsupported_media_type`。
 - `BOOP_MAX_UPLOAD_MB`（默认 10MB）是**单文件上限**：文件本身超过该上限返回 413 `payload_too_large`，恰好等于上限的文件可以上传。请求体总上限是该上限加上固定的 multipart 封装预算（64KiB，用于 boundary 与分段头），请求体超出同样返回 413 `payload_too_large`。
 - 必须恰好一个文件字段，字段名必须是 `file`，否则返回 400 `invalid_body`；其它非文件表单字段会被忽略。缺少文件、多个文件或非 multipart 请求同样返回 400 `invalid_body`。
-- 新文件返回 201；相同字节且属于同一站长时返回 200 且 `reused=true`，复用既有 asset 与文件。响应字段：`id`、`url`、`storage_key`、`mime_type`、`size_bytes`、`width`、`height`、`original_name`、`reused`。`url` 是 `storage_key` 的公开地址：本地保存时为 `/uploads/<storage_key>`，对象存储时为 `BOOP_R2_PUBLIC_URL/<prefix>/<storage_key>`，两种情况下它都等于 `GET` 该资源最终会得到的地址。
+- 新文件返回 201；相同字节且属于同一站长时返回 200 且 `reused=true`，复用既有 asset 与文件。响应字段：`id`、`url`、`storage_key`、`mime_type`、`size_bytes`、`width`、`height`、`original_name`、`reused`。`url` 是 `storage_key` 的公开地址：本地保存时为 `/uploads/<storage_key>`，对象存储时为 `<读取地址>/<prefix>/<storage_key>`，两种情况下它都等于 `GET` 该资源最终会得到的地址。
 - 客户端文件名只作为 `original_name` 元数据保存，绝不进入路径；`storage_key` 由服务端生成为 `YYYY/MM/<32 位随机十六进制>.<ext>`。
 - `asset_ids` 必须是当前站长上传过的图片资源：不存在、不属于自己或不是图片 MIME 均返回 400 `invalid_asset`；发布 `photo` 至少需要一张这样的图片，否则返回 400 `invalid_assets`。
 - `GET /uploads/{storage_key}` 公开只读、无需登录；键形状不符、目录穿越或文件不存在均返回 404。
   - 上传保存在 `BOOP_DATA_DIR` 时，响应是文件本身，带 `Content-Type`、`nosniff` 与 `Cache-Control: public, max-age=31536000, immutable`。
-  - 上传保存在对象存储时，响应是 301 永久重定向到该对象在 `BOOP_R2_PUBLIC_URL` 下的地址，同样带 immutable 缓存头。重定向只针对形状合法的键，所以它不会成为发布任意地址的通道；已发布的页面直接引用对象地址，不经过这条路由。
+  - 上传保存在对象存储时，响应是 301 永久重定向到该对象在读取地址下的地址，同样带 immutable 缓存头。重定向只针对形状合法的键，所以它不会成为发布任意地址的通道；已发布的页面直接引用对象地址，不经过这条路由。
 
 ## 设置与 AI
 
@@ -188,9 +188,12 @@ GitHub 登录规则：
 设置接口规则：
 
 - 两个接口都只允许 owner：游客 401 `unauthorized`，读者 403 `forbidden`。
-- `GET` 返回 `site_name`、`site_description`、`site_avatar_url`、`site_icon_url`、`site_timezone`、`page_size`、`registration_enabled`、`comments_enabled`、`comments_moderation_enabled`、`ai_enabled`、`ai_base_url`、`ai_chat_model`、`ai_embedding_model`、`ai_author_status_ttl_hours`，以及 `github_client_id_set`、`github_client_secret_set`、`ai_api_key_set`、`master_key` 四个布尔标志。**任何密钥明文都不会出现在响应里**，页面只知道某个密钥是否已配置。
-- `PATCH` 只接受上述字段加上三个密钥字段（`github_client_id`、`github_client_secret`、`ai_api_key`）和 `clear_secret`；上传目录、单文件大小与允许的 MIME 类型只能由环境变量配置，请求里出现即 400 `invalid_body`。
+- `GET` 返回 `site_name`、`site_description`、`site_avatar_url`、`site_icon_url`、`site_timezone`、`page_size`、`registration_enabled`、`comments_enabled`、`comments_moderation_enabled`、`ai_enabled`、`ai_base_url`、`ai_chat_model`、`ai_embedding_model`、`ai_author_status_ttl_hours`、`storage_mode`、`storage_endpoint`、`storage_region`、`storage_bucket`、`storage_prefix`、`storage_public_url`，以及 `github_client_id_set`、`github_client_secret_set`、`ai_api_key_set`、`storage_access_key_id_set`、`storage_secret_access_key_set`、`master_key` 六个布尔标志。**任何密钥明文都不会出现在响应里**，页面只知道某个密钥是否已配置。
+- 响应里另有四个描述**当前生效状态**的只读字段：`storage_environment`（站点还没有保存过存储分类，因此正在按 `BOOP_R2_*` 跑）以及 `storage_effective_mode`、`storage_effective_bucket`、`storage_effective_public_url`（进程此刻实际使用的位置）。它们取自运行中的配置而不是存下的行，所以它们报告的是「真的生效了」而不是「写下来了」；这四个字段在 `PATCH` 请求里会被忽略。
+- `PATCH` 只接受上述字段加上五个密钥字段（`github_client_id`、`github_client_secret`、`ai_api_key`、`storage_access_key_id`、`storage_secret_access_key`）和 `clear_secret`；上传目录、单文件大小与允许的 MIME 类型只能由环境变量配置，请求里出现即 400 `invalid_body`。
 - `site_avatar_url` 与 `site_icon_url` 允许为空（分别表示不配置站点头像、不配置站点图标），非空时必须是**无凭据的 http/https 绝对 URL**，且不超过 2048 个字符；相对路径、其它协议、带 `user:pass@` 的值一律 400 `invalid_settings`。`site_icon_url` 是独立的浏览器标签页图标，只影响 `<link rel="icon">`，不参与页面里的头像渲染。
+- 存储字段的校验分两层。**单个字段**：`storage_mode` 只能是 `local` 或 `object`；`storage_endpoint` 与 `storage_public_url` 允许为空，非空时必须是**无凭据、无 query、无 fragment 的 http/https 绝对 URL**；`storage_region`、`storage_bucket`、`storage_prefix` 是单行短文本。**整组**：当 `storage_mode` 为 `object` 时，Endpoint、桶名、读取地址与两个凭据都必填，缺任何一项返回 400 `invalid_settings` 并列出缺的字段名，**且这一次请求里同组的其它字段也不会被写入**。整组校验读的是「这次改动落下去之后」的状态，所以只提交 `{"storage_mode":"object"}` 而凭据早已存好是允许的，而把对象存储正在用的某个凭据 `clear_secret` 掉会被拒绝——除非同一次请求先把 `storage_mode` 改回 `local`。
+- `PATCH` 成功后进程会重新读取存储配置，因此**改存放位置不需要重启**；重新读取失败时返回 500 而不是静默沿用旧位置。
 - 密钥字段为空字符串表示**保持不变**（不会清空）；删除必须显式列出密钥名，例如 `{"clear_secret":["github.client_secret"]}`，删除不存在的密钥是幂等的；`clear_secret` 里的未知名返回 400 `invalid_settings`。
 - 值校验沿用 `internal/settings` 的类型与范围规则：非法值返回 400 `invalid_settings`，且**整次更新失败**——校验先于事务，不会出现部分字段已写入的状态。
 - 密钥用 `BOOP_MASTER_KEY` 的 AES-256-GCM 加密后存入 `secret_settings`，每次写入生成新的 nonce；**密文同时以它自己的 settings key 作为 GCM additional data 绑定**，因此把某条密文换到另一个 key（或另一个 setting）上都无法解密，只会得到认证失败，绝不会返回明文。
@@ -224,7 +227,7 @@ AI 接口规则：
 - `GET /bookmarks` 登录用户收藏；游客重定向到 `/login`。
 - `GET /login` 与 `GET /register` 在 GitHub 客户端 ID 与 Secret **都能解密且非空**时显示同一个 `/auth/github/start` 登录入口（注册页在关闭公开注册后仍然显示，供已绑定的账号登录）；未配置 `BOOP_MASTER_KEY`、缺少任一半或密文损坏（换了主密钥）时隐藏入口并写脱敏告警，`/auth/github/start` 也随之安全失败，不会发出任何 Session。该判断每次都实际解密，不做缓存。
 - `GET /admin` 站长管理入口，303 跳转到 `/admin/settings`，再 303 到第一个设置分类 `/admin/settings/site`；游客重定向到 `/login`，普通读者得到 403 HTML 页。左栏底部对站长渲染一个指向 `/admin` 的齿轮入口，游客与读者的页面里没有这段 DOM；移动端顶栏用同样只对站长可见的图标按钮承担同一入口。
-- `GET /admin/comments` 与 `GET /admin/settings/{section}` 是站长页面，`{section}` 取 `site`、`registration`、`github`、`ai` 之一（未知分类是带 request_id 的统一 404 HTML）；游客都重定向到 `/login`，普通读者都得到 403 HTML 页。后台页面渲染后台自己的导航（桌面为带文字的左栏，移动端为底部三条），**不**渲染前台的图标条与移动端导航；设置页顶部那一排标签是四个分类之间唯一的通路，每个分类页的表单只提交自己那几个字段。
+- `GET /admin/comments` 与 `GET /admin/settings/{section}` 是站长页面，`{section}` 取 `site`、`registration`、`github`、`ai`、`storage` 之一（未知分类是带 request_id 的统一 404 HTML）；游客都重定向到 `/login`，普通读者都得到 403 HTML 页。后台页面渲染后台自己的导航（桌面为带文字的左栏，移动端为底部三条），**不**渲染前台的图标条与移动端导航；设置页顶部那一排标签是五个分类之间唯一的通路，每个分类页的表单只提交自己那几个字段。
 - 已登录时（站长与读者都有）左栏底部与移动端顶栏各渲染一个 `[data-logout]` 按钮，`app.js` 用它发出 `POST /api/v1/auth/logout`，成功后跳回 `/` 让服务端重新渲染游客外壳；游客的页面里这两个按钮都不存在。两处落点是必需的：左栏在 700px 以下 `display:none`，顶栏在 700px 以上 `display:none`，只留一处在某一个宽度区间里就点不到。这一步**没有无脚本回退**：CSRF 令牌只走 `X-CSRF-Token` 请求头（`guardUnsafeMethods` 只读该头），普通表单提交取不到它，服务端会按设计返回 403 `csrf_invalid`；结束会话不能做成 `GET` 链接，否则任意第三方页面用一个图片标签就能把访客登出。
 - 未知页面返回带 request_id 的统一 404；API 永远不返回 HTML 错误页。
 

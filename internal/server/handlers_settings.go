@@ -32,9 +32,27 @@ type settingsPayload struct {
 	AIChatModel               string `json:"ai_chat_model"`
 	AIEmbeddingModel          string `json:"ai_embedding_model"`
 	AIAuthorStatusTTLHours    int    `json:"ai_author_status_ttl_hours"`
+	StorageMode               string `json:"storage_mode"`
+	StorageEndpoint           string `json:"storage_endpoint"`
+	StorageRegion             string `json:"storage_region"`
+	StorageBucket             string `json:"storage_bucket"`
+	StoragePrefix             string `json:"storage_prefix"`
+	StoragePublicURL          string `json:"storage_public_url"`
 	GitHubClientIDSet         bool   `json:"github_client_id_set"`
 	GitHubClientSecretSet     bool   `json:"github_client_secret_set"`
 	AIAPIKeySet               bool   `json:"ai_api_key_set"`
+	StorageAccessKeyIDSet     bool   `json:"storage_access_key_id_set"`
+	StorageSecretAccessKeySet bool   `json:"storage_secret_access_key_set"`
+	// StorageEnvironment is true while the site has never saved the storage
+	// category, so the page can say that BOOP_R2_* is what is in charge.
+	StorageEnvironment bool `json:"storage_environment"`
+	// The effective fields are where the running process actually keeps
+	// uploads. They are read from the live configuration rather than the
+	// stored rows, so the page shows a switch that has taken effect instead of
+	// one that has merely been written down.
+	StorageEffectiveMode      string `json:"storage_effective_mode"`
+	StorageEffectiveBucket    string `json:"storage_effective_bucket"`
+	StorageEffectivePublicURL string `json:"storage_effective_public_url"`
 	// MasterKey reports whether BOOP_MASTER_KEY is configured, so the form can
 	// explain why the secret fields are unusable.
 	MasterKey bool `json:"master_key"`
@@ -59,9 +77,17 @@ type settingsRequest struct {
 	AIChatModel               *string `json:"ai_chat_model"`
 	AIEmbeddingModel          *string `json:"ai_embedding_model"`
 	AIAuthorStatusTTLHours    *int    `json:"ai_author_status_ttl_hours"`
+	StorageMode               *string `json:"storage_mode"`
+	StorageEndpoint           *string `json:"storage_endpoint"`
+	StorageRegion             *string `json:"storage_region"`
+	StorageBucket             *string `json:"storage_bucket"`
+	StoragePrefix             *string `json:"storage_prefix"`
+	StoragePublicURL          *string `json:"storage_public_url"`
 	GitHubClientID            *string `json:"github_client_id"`
 	GitHubClientSecret        *string `json:"github_client_secret"`
 	AIAPIKey                  *string `json:"ai_api_key"`
+	StorageAccessKeyID        *string `json:"storage_access_key_id"`
+	StorageSecretAccessKey    *string `json:"storage_secret_access_key"`
 	// ClearSecret lists secret keys to delete, for example
 	// ["github.client_secret"].
 	ClearSecret []string `json:"clear_secret"`
@@ -79,6 +105,17 @@ func (s *server) settingsPayloadOf(ctx context.Context) (settingsPayload, error)
 	if err != nil {
 		return settingsPayload{}, err
 	}
+	// Where uploads actually go, as opposed to where the rows say they should:
+	// the two differ for a site whose configuration is still the environment's.
+	effective := s.mediaOpts().Object
+	saved, err := settings.StorageConfigured(ctx, s.db)
+	if err != nil {
+		return settingsPayload{}, err
+	}
+	mode := settings.StorageModeLocal
+	if effective.PublicURL != "" {
+		mode = settings.StorageModeObject
+	}
 	return settingsPayload{
 		SiteName:                  values.SiteName,
 		SiteDescription:           values.SiteDescription,
@@ -94,9 +131,21 @@ func (s *server) settingsPayloadOf(ctx context.Context) (settingsPayload, error)
 		AIChatModel:               values.AIChatModel,
 		AIEmbeddingModel:          values.AIEmbeddingModel,
 		AIAuthorStatusTTLHours:    values.AIAuthorStatusTTLHours,
+		StorageMode:               values.StorageMode,
+		StorageEndpoint:           values.StorageEndpoint,
+		StorageRegion:             values.StorageRegion,
+		StorageBucket:             values.StorageBucket,
+		StoragePrefix:             values.StoragePrefix,
+		StoragePublicURL:          values.StoragePublicURL,
 		GitHubClientIDSet:         configured[settings.SecretKeyGitHubClientID],
 		GitHubClientSecretSet:     configured[settings.SecretKeyGitHubClientSecret],
 		AIAPIKeySet:               configured[settings.SecretKeyAIAPIKey],
+		StorageAccessKeyIDSet:     configured[settings.SecretKeyStorageAccessKeyID],
+		StorageSecretAccessKeySet: configured[settings.SecretKeyStorageSecretAccessKey],
+		StorageEnvironment:        !saved,
+		StorageEffectiveMode:      mode,
+		StorageEffectiveBucket:    effective.Bucket,
+		StorageEffectivePublicURL: effective.PublicURL,
 		MasterKey:                 s.secrets != nil,
 	}, nil
 }
@@ -170,6 +219,24 @@ func (s *server) handlePatchSettingsAPI(w http.ResponseWriter, r *http.Request) 
 	if body.AIAuthorStatusTTLHours != nil {
 		values[settings.KeyAIAuthorStatusTTLHours] = *body.AIAuthorStatusTTLHours
 	}
+	if body.StorageMode != nil {
+		values[settings.KeyStorageMode] = *body.StorageMode
+	}
+	if body.StorageEndpoint != nil {
+		values[settings.KeyStorageEndpoint] = *body.StorageEndpoint
+	}
+	if body.StorageRegion != nil {
+		values[settings.KeyStorageRegion] = *body.StorageRegion
+	}
+	if body.StorageBucket != nil {
+		values[settings.KeyStorageBucket] = *body.StorageBucket
+	}
+	if body.StoragePrefix != nil {
+		values[settings.KeyStoragePrefix] = *body.StoragePrefix
+	}
+	if body.StoragePublicURL != nil {
+		values[settings.KeyStoragePublicURL] = *body.StoragePublicURL
+	}
 
 	// An empty secret means "keep the stored value" (docs/API.md), so only a
 	// non-empty field is written.
@@ -181,6 +248,8 @@ func (s *server) handlePatchSettingsAPI(w http.ResponseWriter, r *http.Request) 
 		{settings.SecretKeyGitHubClientID, body.GitHubClientID},
 		{settings.SecretKeyGitHubClientSecret, body.GitHubClientSecret},
 		{settings.SecretKeyAIAPIKey, body.AIAPIKey},
+		{settings.SecretKeyStorageAccessKeyID, body.StorageAccessKeyID},
+		{settings.SecretKeyStorageSecretAccessKey, body.StorageSecretAccessKey},
 	} {
 		if candidate.value != nil && *candidate.value != "" {
 			secrets[candidate.key] = *candidate.value
@@ -194,6 +263,16 @@ func (s *server) handlePatchSettingsAPI(w http.ResponseWriter, r *http.Request) 
 	})
 	if err != nil {
 		s.writeSettingsFailure(w, r, "update settings", err)
+		return
+	}
+
+	// The storage configuration is a cached read of the rows just written, so a
+	// save that changes it has to re-read them: that is what makes a new
+	// backend take effect on the next request instead of the next restart. A
+	// failed re-read is reported rather than hidden, because the site would
+	// otherwise keep writing to the old place after accepting the change.
+	if err := s.refreshStorage(r.Context()); err != nil {
+		s.writeSettingsFailure(w, r, "reload storage", err)
 		return
 	}
 
@@ -285,6 +364,12 @@ var adminSettingsSections = []adminSettingsSection{
 		Secrets: true,
 		Hint:    "OpenAI-compatible 服务；作者状态与写作助手在配置完成后生效。密钥只会加密保存，任何页面都不会回显。",
 	},
+	{
+		Key:     "storage",
+		Label:   "存储",
+		Secrets: true,
+		Hint:    "上传图片存放的位置。切换存放位置不会移动已经存在的对象，所以换到对象存储之前必须先把本地目录里的对象按原路径搬进桶里；保存后立刻生效，不需要重启。",
+	},
 }
 
 // settingsSectionOf resolves a path segment to a category.
@@ -327,6 +412,7 @@ func (s *server) handleAdminSettingsPage(w http.ResponseWriter, r *http.Request)
 		pageView: s.adminShellView(r, adminSectionSettings),
 		Settings: payload,
 		BaseURL:  s.cfg.BaseURL,
+		DataDir:  s.cfg.DataDir,
 		Section:  section,
 		Tabs:     settingsTabsOf(section.Key),
 	})
@@ -340,6 +426,9 @@ type adminSettingsView struct {
 	// BaseURL is the configured origin, shown so the owner can copy the exact
 	// OAuth callback address.
 	BaseURL string
+	// DataDir is where the local upload directory lives, named on the storage
+	// page so "本地目录" is an address rather than a phrase.
+	DataDir string
 	// Section is the category this page is, and Tabs is the row that switches
 	// between them.
 	Section adminSettingsSection

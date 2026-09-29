@@ -27,6 +27,10 @@ const (
 	maxDescriptionRunes = 280
 	maxModelNameRunes   = 200
 	maxAssetURLRunes    = 2048
+	// maxStorageRunes bounds every object-storage field. A bucket name is at
+	// most 63 characters and an endpoint host far less than this; the bound is
+	// here so one field cannot be used to store a document.
+	maxStorageRunes = 255
 )
 
 // Setting keys as stored in the settings table.
@@ -45,6 +49,24 @@ const (
 	KeyAIChatModel               = "ai.chat_model"
 	KeyAIEmbeddingModel          = "ai.embedding_model"
 	KeyAIAuthorStatusTTLHours    = "ai.author_status_ttl_hours"
+
+	// Where uploads are kept. The mode is stored explicitly rather than
+	// inferred from whether the other fields are filled in: a site that has
+	// switched back to the local directory keeps its bucket values so switching
+	// forward again does not mean typing them a second time.
+	KeyStorageMode      = "storage.mode"
+	KeyStorageEndpoint  = "storage.endpoint"
+	KeyStorageRegion    = "storage.region"
+	KeyStorageBucket    = "storage.bucket"
+	KeyStoragePrefix    = "storage.prefix"
+	KeyStoragePublicURL = "storage.public_url"
+)
+
+// Storage modes. A site that has never saved the storage category follows the
+// environment, which is the documented default of a local directory.
+const (
+	StorageModeLocal  = "local"
+	StorageModeObject = "object"
 )
 
 // Secret keys live in the secret_settings table and are encrypted with
@@ -56,6 +78,11 @@ const (
 	SecretKeyGitHubClientID     = "github.client_id"
 	SecretKeyGitHubClientSecret = "github.client_secret"
 	SecretKeyAIAPIKey           = "ai.api_key"
+	// The object-storage credentials are secrets for the same reason an API key
+	// is: an R2 token writes to the bucket and has no business being rendered
+	// back into a page.
+	SecretKeyStorageAccessKeyID     = "storage.access_key_id"
+	SecretKeyStorageSecretAccessKey = "storage.secret_access_key"
 )
 
 // maxSecretBytes bounds one stored secret. An OAuth client secret or an API key
@@ -77,7 +104,10 @@ var (
 
 // secretKeys lists every documented secret setting, so callers can report
 // which ones are configured without knowing the list themselves.
-var secretKeys = []string{SecretKeyGitHubClientID, SecretKeyGitHubClientSecret, SecretKeyAIAPIKey}
+var secretKeys = []string{
+	SecretKeyGitHubClientID, SecretKeyGitHubClientSecret, SecretKeyAIAPIKey,
+	SecretKeyStorageAccessKeyID, SecretKeyStorageSecretAccessKey,
+}
 
 func knownSecretKey(key string) bool {
 	for _, known := range secretKeys {
@@ -104,6 +134,12 @@ type Values struct {
 	AIChatModel               string
 	AIEmbeddingModel          string
 	AIAuthorStatusTTLHours    int
+	StorageMode               string
+	StorageEndpoint           string
+	StorageRegion             string
+	StorageBucket             string
+	StoragePrefix             string
+	StoragePublicURL          string
 }
 
 // Defaults returns the documented default settings.
@@ -123,11 +159,19 @@ func Defaults() Values {
 		AIChatModel:               "",
 		AIEmbeddingModel:          "",
 		AIAuthorStatusTTLHours:    168,
+		StorageMode:               StorageModeLocal,
 	}
 }
 
 // Seed writes the default value of every known key that has no row yet, in one
 // transaction. Existing values are never overwritten.
+//
+// The storage category is deliberately not seeded. An absent storage row is how
+// the site knows it has never saved that category and must keep following
+// BOOP_R2_*; writing the default would erase the fact and silently move a
+// deployment's uploads to the local directory. Those rows are written by
+// ImportStorage when the environment has a bucket to import, and by the first
+// save from the settings page.
 func Seed(ctx context.Context, db *sql.DB) error {
 	if db == nil {
 		return errors.New("settings: seed: nil database")
@@ -150,6 +194,9 @@ func Seed(ctx context.Context, db *sql.DB) error {
 	defer statement.Close()
 
 	for key, target := range fields {
+		if storageKey(key) {
+			continue
+		}
 		raw, err := json.Marshal(target)
 		if err != nil {
 			return fmt.Errorf("settings: seed: encode %s: %w", key, err)
@@ -240,6 +287,11 @@ type Update struct {
 // clearing a secret only deletes a row, so it never needs the master key and
 // stays idempotent. A request that both writes and clears is still a secret
 // write and fails as a whole when the key is missing.
+//
+// A change to the storage category is also checked as the state it produces
+// rather than as it arrives, because some settings only mean something together
+// (a bucket without credentials is not a configuration). That check reads the
+// stored rows inside the transaction, so a rejected update still writes nothing.
 func Apply(ctx context.Context, db *sql.DB, box *secretbox.Box, update Update) error {
 	if db == nil {
 		return errors.New("settings: apply: nil database")
@@ -294,6 +346,12 @@ func Apply(ctx context.Context, db *sql.DB, box *secretbox.Box, update Update) e
 		return fmt.Errorf("settings: apply: begin: %w", err)
 	}
 	defer tx.Rollback()
+
+	if touchesStorage(update) {
+		if err := checkStorageAfterUpdate(ctx, tx, update); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidValue, err)
+		}
+	}
 
 	for key, value := range update.Values {
 		raw, err := json.Marshal(value)
@@ -428,6 +486,22 @@ func validate(key string, value any) error {
 		return validateInt(key, value, minPageSize, maxPageSize)
 	case KeyAIAuthorStatusTTLHours:
 		return validateInt(key, value, minAuthorStatusTTL, maxAuthorStatusTTL)
+	case KeyStorageMode:
+		mode, err := requireString(key, value)
+		if err != nil {
+			return err
+		}
+		if mode != StorageModeLocal && mode != StorageModeObject {
+			return fmt.Errorf("settings: set: %s %q is not %s or %s", key, mode, StorageModeLocal, StorageModeObject)
+		}
+		return nil
+	case KeyStorageEndpoint, KeyStorageRegion, KeyStorageBucket, KeyStoragePrefix:
+		if key == KeyStorageEndpoint {
+			return validateStorageAddress(key, value, maxStorageRunes)
+		}
+		return validateStorageText(key, value, maxStorageRunes)
+	case KeyStoragePublicURL:
+		return validateStorageAddress(key, value, maxAssetURLRunes)
 	case KeyAuthRegistrationEnabled, KeyCommentsEnabled, KeyCommentsModerationEnabled, KeyAIEnabled:
 		if _, ok := value.(bool); !ok {
 			return fmt.Errorf("settings: set: %s requires a bool, got %T", key, value)
@@ -436,6 +510,42 @@ func validate(key string, value any) error {
 	default:
 		return fmt.Errorf("settings: set: unknown key %q", key)
 	}
+}
+
+// validateStorageAddress checks one of the two addresses a bucket needs: the
+// signing endpoint and the public read address. An empty value is acceptable —
+// the mode decides whether it is required — and a non-empty one has to be an
+// absolute http(s) URL without credentials, a query or a fragment.
+//
+// The shape is checked here, not only when the site switches to the bucket, so
+// a value typed into a URL field says so immediately instead of on the day it
+// is first used.
+func validateStorageAddress(key string, value any, maxRunes int) error {
+	address, err := requireString(key, value)
+	if err != nil {
+		return err
+	}
+	if err := validateStorageText(key, address, maxRunes); err != nil {
+		return err
+	}
+	return validateBaseURL(key, address)
+}
+
+// validateStorageText checks one object-storage field: an empty value is always
+// acceptable (the mode decides whether it is required), and a non-empty one is
+// a single short line rather than a document.
+func validateStorageText(key string, value any, maxRunes int) error {
+	s, err := requireString(key, value)
+	if err != nil {
+		return err
+	}
+	if utf8.RuneCountInString(s) > maxRunes {
+		return fmt.Errorf("settings: set: %s must be at most %d characters", key, maxRunes)
+	}
+	if strings.ContainsAny(s, "\r\n") {
+		return fmt.Errorf("settings: set: %s must be a single line", key)
+	}
+	return nil
 }
 
 func requireString(key string, value any) (string, error) {
@@ -543,5 +653,11 @@ func fieldsOf(values *Values) map[string]any {
 		KeyAIChatModel:               &values.AIChatModel,
 		KeyAIEmbeddingModel:          &values.AIEmbeddingModel,
 		KeyAIAuthorStatusTTLHours:    &values.AIAuthorStatusTTLHours,
+		KeyStorageMode:               &values.StorageMode,
+		KeyStorageEndpoint:           &values.StorageEndpoint,
+		KeyStorageRegion:             &values.StorageRegion,
+		KeyStorageBucket:             &values.StorageBucket,
+		KeyStoragePrefix:             &values.StoragePrefix,
+		KeyStoragePublicURL:          &values.StoragePublicURL,
 	}
 }

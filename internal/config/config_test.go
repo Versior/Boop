@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"boop/internal/settings"
 )
 
 // envFrom turns a map into a LookupEnv-shaped function so tests never depend on
@@ -319,5 +321,72 @@ func TestLoadAcceptsRootBaseURLs(t *testing.T) {
 				t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, want)
 			}
 		})
+	}
+}
+
+// StorageSelection is the environment's answer in the shape the settings
+// package uses, so the same value seeds the settings table, is reported at
+// startup, and stays in charge until the site saves the category.
+func TestStorageSelectionMapsTheEnvironment(t *testing.T) {
+	cfg, err := load(envFrom(objectEnvironment()))
+	if err != nil {
+		t.Fatalf("load(): %v", err)
+	}
+	selection := cfg.StorageSelection()
+	if !selection.Object() {
+		t.Fatal("a configured bucket produced a local selection")
+	}
+	for name, pair := range map[string][2]string{
+		"endpoint":          {selection.Endpoint, cfg.Storage.Endpoint},
+		"bucket":            {selection.Bucket, cfg.Storage.Bucket},
+		"public URL":        {selection.PublicURL, cfg.Storage.PublicURL},
+		"access key id":     {selection.AccessKeyID, cfg.Storage.AccessKey},
+		"secret access key": {selection.SecretAccessKey, cfg.Storage.SecretKey},
+	} {
+		if pair[0] != pair[1] {
+			t.Errorf("%s = %q, want %q", name, pair[0], pair[1])
+		}
+	}
+
+	// A deployment that configures nothing keeps the documented default.
+	empty, err := load(envFrom(map[string]string{}))
+	if err != nil {
+		t.Fatalf("load(): %v", err)
+	}
+	selection = empty.StorageSelection()
+	if selection.Object() {
+		t.Errorf("StorageSelection = %+v, want the local directory", selection)
+	}
+	if selection.Mode != settings.StorageModeLocal {
+		t.Errorf("mode = %q, want %q", selection.Mode, settings.StorageModeLocal)
+	}
+}
+
+func TestSecretBoxIsNilWithoutTheMasterKey(t *testing.T) {
+	// The box is optional: a nil one makes every secret feature fail closed
+	// rather than storing plaintext, which is the documented behaviour of a
+	// site that never set BOOP_MASTER_KEY.
+	cfg, err := load(envFrom(map[string]string{}))
+	if err != nil {
+		t.Fatalf("load(): %v", err)
+	}
+	box, err := cfg.SecretBox()
+	if err != nil {
+		t.Fatalf("SecretBox(): %v", err)
+	}
+	if box != nil {
+		t.Error("SecretBox() returned a box without a master key")
+	}
+
+	cfg, err = load(envFrom(map[string]string{"BOOP_MASTER_KEY": base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))}))
+	if err != nil {
+		t.Fatalf("load(): %v", err)
+	}
+	box, err = cfg.SecretBox()
+	if err != nil {
+		t.Fatalf("SecretBox(): %v", err)
+	}
+	if box == nil {
+		t.Error("SecretBox() returned nil with a master key configured")
 	}
 }

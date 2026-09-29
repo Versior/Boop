@@ -80,15 +80,50 @@ func openStore(logger *slog.Logger) (config.Config, *sql.DB, error) {
 	return cfg, db, nil
 }
 
-// uploadsDescription says where uploads are kept, named by the two things an
-// operator needs in order to reason about backups: which backend, and which
-// bucket or directory. The credentials are never part of it.
-func uploadsDescription(cfg config.Config) string {
-	object := cfg.ObjectStorage()
-	if !object.Enabled() {
+// describeStorage says where uploads are kept, in the two terms an operator
+// needs in order to reason about backups: which backend, and which bucket or
+// directory. The credentials are never part of it.
+func describeStorage(storage settings.Storage) string {
+	if !storage.Object() {
 		return "local"
 	}
-	return "bucket " + object.Bucket + " read from " + object.PublicURL
+	return "bucket " + storage.Bucket + " read from " + storage.PublicURL
+}
+
+// importStorageFromEnvironment seeds the storage category from BOOP_R2_* on the
+// first start, so a deployment that configures its bucket through the
+// environment keeps working now that the category exists, and its settings page
+// can show — and change — what it is using. Once the site has saved the
+// category the environment is ignored; that is what makes the page meaningful.
+//
+// A missing BOOP_MASTER_KEY is not fatal here. The credentials cannot be
+// encrypted without it, so nothing is written and the process stays on the
+// environment's configuration, which is exactly what it did before this
+// category existed.
+func importStorageFromEnvironment(ctx context.Context, cfg config.Config, db *sql.DB, logger *slog.Logger) error {
+	selection := cfg.StorageSelection()
+	if !selection.Object() {
+		return nil
+	}
+	box, err := cfg.SecretBox()
+	if err != nil {
+		return err
+	}
+	imported, err := settings.ImportStorage(ctx, db, box, selection)
+	if errors.Is(err, settings.ErrMasterKeyRequired) {
+		logger.Warn("BOOP_R2_* stays in charge: without BOOP_MASTER_KEY its credentials cannot be stored, so the storage settings page can only be read")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if imported {
+		logger.Info("storage configuration imported from the environment",
+			slog.String("bucket", selection.Bucket),
+			slog.String("public_url", selection.PublicURL),
+		)
+	}
+	return nil
 }
 
 func runServer() error {
@@ -105,9 +140,27 @@ func runServer() error {
 		return err
 	}
 	defer db.Close()
+	// The environment seeds the storage category before the defaults are
+	// written: Seed fills in every missing key and never overwrites, so the
+	// order matters only for the one category the environment still owns.
+	if err := importStorageFromEnvironment(context.Background(), cfg, db, logger); err != nil {
+		return err
+	}
 	if err := settings.Seed(context.Background(), db); err != nil {
 		return err
 	}
+	// Where uploads go is read from the settings table rather than from the
+	// environment, so the startup log reports what the process will actually
+	// use — including a bucket configured from the page.
+	box, err := cfg.SecretBox()
+	if err != nil {
+		return err
+	}
+	storage, err := settings.ReadStorage(context.Background(), db, box, cfg.StorageSelection())
+	if err != nil {
+		return err
+	}
+	uploads := describeStorage(storage)
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
@@ -128,7 +181,7 @@ func runServer() error {
 			slog.String("addr", cfg.Addr),
 			slog.String("base_url", cfg.BaseURL),
 			slog.String("data_dir", cfg.DataDir),
-			slog.String("uploads", uploadsDescription(cfg)),
+			slog.String("uploads", uploads),
 		)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serveErr <- err

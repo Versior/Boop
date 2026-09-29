@@ -4,6 +4,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	stdhtml "html"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"boop/internal/ai"
@@ -57,6 +59,11 @@ type server struct {
 	// aiRefresh is the process-local single-flight guard of the author status
 	// refresh, so concurrent home visits never duplicate generation.
 	aiRefresh ai.Guard
+	// storage is where uploads are kept right now. It is read from the settings
+	// table at construction and replaced after every settings save, which is
+	// what lets the storage category take effect without a restart; it stays
+	// nil until a read succeeds, and mediaOpts then keeps to the environment.
+	storage atomic.Pointer[media.Options]
 }
 
 // New builds the Boop HTTP handler. It panics only when the embedded templates
@@ -77,13 +84,11 @@ func newServer(cfg config.Config, db *sql.DB, logger *slog.Logger) (*server, err
 	}
 	// The master key is optional: without it every secret feature reports an
 	// unconfigured site instead of storing plaintext, so the box stays nil.
-	var box *secretbox.Box
-	if cfg.MasterKey != "" {
-		if box, err = secretbox.NewFromBase64(cfg.MasterKey); err != nil {
-			return nil, err
-		}
+	box, err := cfg.SecretBox()
+	if err != nil {
+		return nil, err
 	}
-	return &server{
+	srv := &server{
 		cfg:          cfg,
 		db:           db,
 		logger:       logger,
@@ -93,7 +98,16 @@ func newServer(cfg config.Config, db *sql.DB, logger *slog.Logger) (*server, err
 		github:       auth.NewGitHubAPI(nil),
 		oauthStates:  newOAuthStates(time.Now),
 		sessionSweep: newSessionSweep(time.Now),
-	}, nil
+	}
+	// Where uploads are kept decides the address of every published image, so
+	// it is read here rather than on the first request. A failed read is not
+	// fatal: the process keeps to the environment until a save replaces it,
+	// which is exactly what it did before the storage category existed.
+	if err := srv.refreshStorage(context.Background()); err != nil {
+		logger.LogAttrs(context.Background(), slog.LevelWarn, "storage settings unavailable, staying on the environment",
+			slog.String("error", err.Error()))
+	}
+	return srv, nil
 }
 
 // parsePages builds one isolated template set per page so pages cannot leak
@@ -288,12 +302,53 @@ func (s *server) displaySettings(r *http.Request) settings.Values {
 // serves or links an upload. It exists so the upload handler, the asset route
 // and the JSON and HTML payloads all read one configuration rather than each
 // assembling their own.
+//
+// It reads the snapshot refreshed by refreshStorage rather than the process
+// configuration, so saving the storage category changes where uploads go
+// without a restart. A nil snapshot means the settings table has not been read
+// yet or could not be, and the environment is what the process falls back to.
 func (s *server) mediaOpts() media.Options {
+	if opts := s.storage.Load(); opts != nil {
+		return *opts
+	}
+	return s.environmentMediaOpts()
+}
+
+// environmentMediaOpts is the configuration the process had before the storage
+// category existed: BOOP_DATA_DIR for the local directory, BOOP_R2_* for a
+// bucket. It is the value a construction-time read failure falls back to.
+func (s *server) environmentMediaOpts() media.Options {
 	return media.Options{
 		DataDir:  s.cfg.DataDir,
 		MaxBytes: s.cfg.MaxUploadBytes(),
 		Object:   s.cfg.ObjectStorage(),
 	}
+}
+
+// refreshStorage re-reads where uploads are kept and makes it the configuration
+// every store, serve and link path uses. It is called at construction and after
+// every settings save; that second call is what makes the storage category
+// effective without a restart.
+func (s *server) refreshStorage(ctx context.Context) error {
+	storage, err := settings.ReadStorage(ctx, s.db, s.secrets, s.cfg.StorageSelection())
+	if err != nil {
+		return err
+	}
+	if storage.Object() && (storage.AccessKeyID == "" || storage.SecretAccessKey == "") {
+		// Reading a bucket needs the public address, but writing to one needs
+		// the signing key: a site in this state still serves its images and
+		// then fails every upload, so it is said out loud rather than left to
+		// the first upload of the day.
+		s.logger.LogAttrs(ctx, slog.LevelWarn, "object storage is configured without usable credentials",
+			slog.String("bucket", storage.Bucket))
+	}
+	opts := media.Options{
+		DataDir:  s.cfg.DataDir,
+		MaxBytes: s.cfg.MaxUploadBytes(),
+		Object:   storage.ObjectOptions(),
+	}
+	s.storage.Store(&opts)
+	return nil
 }
 
 // handleHealthz reports process liveness and never touches external systems.

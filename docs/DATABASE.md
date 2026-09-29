@@ -171,7 +171,7 @@ CREATE VIRTUAL TABLE post_search USING fts5(
 
 - 创建评论时在同一个事务里校验：内容已发布且未删除，父评论属于同一文章、本身没有父级、且当前为 `approved`（回复隐藏的父评论会让附件评论不可达）。
 - 评论的 `comments.enabled` 与 `comments.moderation_enabled` 也在这个事务内读取：状态由事务内的值决定，调用方不能传入先前读到的值，写入与判断之间不会被并发设置变更插入，读取失败（值无法解码）则回滚且不写行。
-- 设置写入（`settings` 与 `secret_settings`）是同一事务：类型与范围校验在事务之前完成，任何一个字段被拒都不会留下部分写入。密钥用 `BOOP_MASTER_KEY` 的 AES-256-GCM 加密后存入 `secret_settings`，每次写入都生成新的 nonce（同一明文两次加密结果不同），并以该密钥自己的 settings key 作为 GCM additional data：密文只能解回同一个 key，把一条密文换到另一个 key 上同样认证失败，不会返回明文。没有 `BOOP_MASTER_KEY` 时不得写入任何密钥行，读取密钥也直接失败；**删除密钥只是 `DELETE` 一行，不需要解密，因此没有主密钥时仍可幂等清除**（同一请求里既有新密钥又有删除时按写入处理，整单失败）。
+- 设置写入（`settings` 与 `secret_settings`）是同一事务：类型与范围校验在事务之前完成，任何一个字段被拒都不会留下部分写入。**改动涉及 `storage.*` 时还会在事务内读一次合并后的状态再做整组校验**（对象存储模式下 Endpoint、桶名、读取地址与两个凭据都必填），这是唯一一处需要跨行判断的设置；合并校验只读不写，被拒时同样回滚，所以「整次更新失败」的性质不变。密钥用 `BOOP_MASTER_KEY` 的 AES-256-GCM 加密后存入 `secret_settings`，每次写入都生成新的 nonce（同一明文两次加密结果不同），并以该密钥自己的 settings key 作为 GCM additional data：密文只能解回同一个 key，把一条密文换到另一个 key 上同样认证失败，不会返回明文。没有 `BOOP_MASTER_KEY` 时不得写入任何密钥行，读取密钥也直接失败；**删除密钥只是 `DELETE` 一行，不需要解密，因此没有主密钥时仍可幂等清除**（同一请求里既有新密钥又有删除时按写入处理，整单失败）。
 - GitHub 登录在一个事务内完成：先查 `oauth_accounts(provider, provider_user_id)`，否则仅在 GitHub 标记邮箱已验证时按邮箱绑定已有用户或创建新用户（`password_hash` 为 NULL）；`auth.registration_enabled` 在读它的同一事务内决定是否允许创建新用户，未验证邮箱一律不写行。绑定插入遇到 `UNIQUE(provider, provider_user_id)` 冲突时在同一事务内重查实际 `user_id`：只有它等于本次解析出的用户时才幂等成功，否则报冲突并回滚，绝不把该身份当作另一个用户的登录凭据。
 - 发布 `photo` 必须在同一事务中确认至少一个属于当前 owner 且为图片 MIME 的 `assets` 行。
 - 本地上传按 `(owner_user_id, sha256)` 去重：相同字节只保留一行 asset 和一个文件，由 `idx_assets_owner_hash` 唯一索引保证（迁移 003），不依赖应用层的查询时序。
@@ -212,4 +212,8 @@ CREATE VIRTUAL TABLE post_search USING fts5(
   "ai.author_status_ttl_hours": 168
 }
 ```
+
+`storage.*` 这一组**不在播种之列**：`storage.mode` 等六个键由「第一次保存存储分类」或「用 `BOOP_R2_*` 做的首次导入」写入，`storage.mode` 缺行就是「站点从未保存过存储配置，按环境变量跑」的标志。把它们按默认值播种会抹掉这个事实，让一个只有 `BOOP_R2_*`（且没有 `BOOP_MASTER_KEY`、凭据无法入库）的部署在升级后悄悄把新上传写到本地目录去。读取时它们仍回退到文档默认值（`storage.mode` = `local`），所以页面与媒体路径看到一个确定的存放位置。
+
+密钥（`secret_settings`）的键：`github.client_id`、`github.client_secret`、`ai.api_key`、`storage.access_key_id`、`storage.secret_access_key`。
 

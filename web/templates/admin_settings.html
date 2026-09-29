@@ -24,9 +24,10 @@
       {{if eq .Section.Key "registration"}}{{template "settingsRegistration" .}}{{end}}
       {{if eq .Section.Key "github"}}{{template "settingsGithub" .}}{{end}}
       {{if eq .Section.Key "ai"}}{{template "settingsAI" .}}{{end}}
+      {{if eq .Section.Key "storage"}}{{template "settingsStorage" .}}{{end}}
 
       {{if and .Section.Secrets (not .Settings.MasterKey)}}
-      <p class="settings-warning" role="alert">未配置 BOOP_MASTER_KEY：密钥字段无法保存（清除已保存的密钥仍可用）；站点也会隐藏 GitHub 登录入口。</p>
+      <p class="settings-warning" role="alert">未配置 BOOP_MASTER_KEY：密钥字段无法保存（清除已保存的密钥仍可用）。</p>
       {{end}}
       <p class="auth-error" role="alert" data-settings-error hidden></p>
       <button class="auth-submit" type="submit" data-settings-submit>保存{{.Section.Label}}设置</button>
@@ -87,7 +88,7 @@
 
 {{define "settingsGithub"}}
       <section class="settings-section">
-        <p class="settings-hint">在 GitHub OAuth App 里把回调地址填成 <code>{{.BaseURL}}/auth/github/callback</code>。</p>
+        <p class="settings-hint">在 GitHub OAuth App 里把回调地址填成 <code>{{.BaseURL}}/auth/github/callback</code>。<strong>未配置 BOOP_MASTER_KEY 时站点会隐藏 GitHub 登录入口</strong>，因为凭据无法保存。</p>
         <label class="auth-field">
           <span>Client ID</span>
           <input name="github_client_id" type="password" autocomplete="off" maxlength="512"
@@ -142,5 +143,77 @@
           <input type="checkbox" data-secret-clear="ai.api_key">
           <span>清除已保存的 API Key</span>
         </label>
+      </section>
+{{end}}
+
+{{define "settingsStorage"}}
+      <section class="settings-section">
+        <p class="settings-hint">
+          当前生效：{{if eq .Settings.StorageEffectiveMode "local"}}本地目录 <code>{{.DataDir}}/uploads</code>{{else}}桶 <code>{{.Settings.StorageEffectiveBucket}}</code>，浏览器读自 <code>{{.Settings.StorageEffectivePublicURL}}</code>{{end}}
+        </p>
+        {{if .Settings.StorageEnvironment}}
+        <p class="settings-hint">这一页还没有保存过，上面的值来自环境变量 <code>BOOP_R2_*</code>；保存一次之后就以这一页为准，环境变量不再生效。</p>
+        {{end}}
+
+        <!-- 切换存放位置不会移动任何对象，而 assets 表里没有「这个对象在哪儿」这一列：
+             地址一律由当前配置生成。所以搬对象必须在切换之前做完，这条警告出现在这一页
+             的每一次渲染里，而不是等到保存失败才说。 -->
+        <p class="settings-warning" role="alert">
+          切换存放位置<strong>不会移动已经存在的对象</strong>，地址一律按当前配置生成。换成对象存储之前，必须先把 <code>uploads/</code> 下的文件按原路径同步进桶里（对象数应与 <code>assets</code> 表的行数一致），否则已有图片会全部失效；换回本地目录同理。两种位置只能有一个生效。
+        </p>
+
+        <label class="auth-field">
+          <span>存放位置</span>
+          <select name="storage_mode">
+            <option value="local"{{if eq .Settings.StorageMode "local"}} selected{{end}}>本地目录（BOOP_DATA_DIR/uploads）</option>
+            <option value="object"{{if eq .Settings.StorageMode "object"}} selected{{end}}>对象存储（S3 兼容：R2 / MinIO / S3）</option>
+          </select>
+        </label>
+        <p class="settings-hint">下面五项与两个凭据只在选择「对象存储」时必填；留在本地目录时可以先填好，日后切换不必重输。</p>
+
+        <label class="auth-field">
+          <span>Endpoint</span>
+          <input name="storage_endpoint" type="url" maxlength="255" value="{{.Settings.StorageEndpoint}}" placeholder="https://&lt;account-id&gt;.r2.cloudflarestorage.com">
+        </label>
+        <p class="settings-hint">S3 签名 API 地址。它<strong>不是</strong>公开读取面，浏览器不会访问它。</p>
+        <label class="auth-field">
+          <span>桶名 Bucket</span>
+          <input name="storage_bucket" type="text" maxlength="255" value="{{.Settings.StorageBucket}}" placeholder="boop-uploads">
+        </label>
+        <label class="auth-field">
+          <span>读取地址 Public URL</span>
+          <input name="storage_public_url" type="url" maxlength="2048" value="{{.Settings.StoragePublicURL}}" placeholder="https://uploads.example.com">
+        </label>
+        <p class="settings-hint">桶的公开读取地址：R2 自定义域名（推荐）或桶的 <code>r2.dev</code> 地址。图片地址由它生成，读者直接从该域名取图，不经过本站进程。</p>
+        <label class="auth-field">
+          <span>区域 Region</span>
+          <input name="storage_region" type="text" maxlength="255" value="{{.Settings.StorageRegion}}" placeholder="auto">
+        </label>
+        <p class="settings-hint">R2 用 <code>auto</code> 签名，留空即用默认值。</p>
+        <label class="auth-field">
+          <span>键前缀 Prefix</span>
+          <input name="storage_prefix" type="text" maxlength="255" value="{{.Settings.StoragePrefix}}" placeholder="uploads">
+        </label>
+        <p class="settings-hint">对象名在桶里的公共前缀，例如 <code>uploads/</code> 或 <code>blog/uploads</code>，可留空。切换前缀会让已有对象失联，和切换存放位置一样需要先搬。</p>
+
+        <label class="auth-field">
+          <span>Access Key ID</span>
+          <input name="storage_access_key_id" type="password" autocomplete="off" maxlength="512"
+                 placeholder="{{if .Settings.StorageAccessKeyIDSet}}已配置，留空则保持不变{{else}}未配置{{end}}">
+        </label>
+        <label class="settings-clear">
+          <input type="checkbox" data-secret-clear="storage.access_key_id">
+          <span>清除已保存的 Access Key ID</span>
+        </label>
+        <label class="auth-field">
+          <span>Secret Access Key</span>
+          <input name="storage_secret_access_key" type="password" autocomplete="off" maxlength="512"
+                 placeholder="{{if .Settings.StorageSecretAccessKeySet}}已配置，留空则保持不变{{else}}未配置{{end}}">
+        </label>
+        <label class="settings-clear">
+          <input type="checkbox" data-secret-clear="storage.secret_access_key">
+          <span>清除已保存的 Secret Access Key</span>
+        </label>
+        <p class="settings-hint">在 Cloudflare 控制台创建 <strong>R2 API Token</strong>（不要用全局 API Key），权限只需要 Object Read &amp; Write 并限定到这一个桶。两个凭据只会加密保存，任何页面都不会回显，启动日志里也不会出现。</p>
       </section>
 {{end}}

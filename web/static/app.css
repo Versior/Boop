@@ -719,7 +719,9 @@ button.action:disabled{opacity:.6;cursor:default}
 .auth-form{margin-top:22px;display:flex;flex-direction:column;gap:16px;max-width:420px}
 .auth-field{display:flex;flex-direction:column;gap:6px}
 .auth-field span{font-size:13px;font-weight:600;color:var(--muted)}
-.auth-field input{
+/* select 与 input 同一套外观：设置页用它选存放位置这类少数派选项，原生下拉比一排单选更省地方。 */
+.auth-field input,
+.auth-field select{
   height:44px;
   padding:0 14px;
   border:1px solid var(--line);
@@ -729,7 +731,9 @@ button.action:disabled{opacity:.6;cursor:default}
   font:inherit;
   font-size:15px;
 }
-.auth-field input:focus-visible{border-color:var(--accent);outline-offset:2px}
+.auth-field select{appearance:none;padding-right:36px;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);background-position:calc(100% - 20px) 19px,calc(100% - 15px) 19px;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+.auth-field input:focus-visible,
+.auth-field select:focus-visible{border-color:var(--accent);outline-offset:2px}
 .auth-field textarea{
   padding:12px 14px;
   border:1px solid var(--line);

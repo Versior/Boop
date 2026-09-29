@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"boop/internal/media"
+	"boop/internal/secretbox"
+	"boop/internal/settings"
 )
 
 // Documented defaults from docs/PRODUCT.md.
@@ -71,6 +73,28 @@ func (c Config) ObjectStorage() media.ObjectOptions {
 		PublicURL: c.Storage.PublicURL,
 		AccessKey: c.Storage.AccessKey,
 		SecretKey: c.Storage.SecretKey,
+	}
+}
+
+// StorageSelection maps the environment onto the settings package's own
+// description of where uploads are kept. The same value seeds the settings
+// table on a first start, is reported at startup, and stays in charge when a
+// site has never saved the storage category — so the mapping exists once
+// rather than in each of those three places.
+func (c Config) StorageSelection() settings.Storage {
+	object := c.ObjectStorage()
+	if !object.Enabled() {
+		return settings.Storage{Mode: settings.StorageModeLocal}
+	}
+	return settings.Storage{
+		Mode:            settings.StorageModeObject,
+		Endpoint:        object.Endpoint,
+		Region:          object.Region,
+		Bucket:          object.Bucket,
+		Prefix:          object.Prefix,
+		PublicURL:       object.PublicURL,
+		AccessKeyID:     object.AccessKey,
+		SecretAccessKey: object.SecretKey,
 	}
 }
 
@@ -209,6 +233,16 @@ func validateStorage(cfg Config) error {
 		return fmt.Errorf("object storage: %w", err)
 	}
 	return nil
+}
+
+// SecretBox is the box that encrypts every stored secret, or nil when
+// BOOP_MASTER_KEY is absent. The box is optional on purpose: a nil one makes
+// every secret feature fail closed instead of storing plaintext.
+func (c Config) SecretBox() (*secretbox.Box, error) {
+	if c.MasterKey == "" {
+		return nil, nil
+	}
+	return secretbox.NewFromBase64(c.MasterKey)
 }
 
 // MaxUploadBytes is the request body ceiling derived from BOOP_MAX_UPLOAD_MB.

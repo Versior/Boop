@@ -757,6 +757,12 @@ func TestAdminSettingsPageAndIndex(t *testing.T) {
 			`name="ai_embedding_model"`, `name="ai_author_status_ttl_hours"`,
 			`name="ai_api_key"`, `data-secret-clear="ai.api_key"`,
 		}},
+		{"storage", "存储", []string{
+			`name="storage_mode"`, `name="storage_endpoint"`, `name="storage_region"`,
+			`name="storage_bucket"`, `name="storage_prefix"`, `name="storage_public_url"`,
+			`name="storage_access_key_id"`, `data-secret-clear="storage.access_key_id"`,
+			`name="storage_secret_access_key"`, `data-secret-clear="storage.secret_access_key"`,
+		}},
 	}
 	t.Run("each category renders only its own fields", func(t *testing.T) {
 		for _, category := range categories {
