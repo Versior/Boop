@@ -31,10 +31,10 @@ html{-webkit-text-size-adjust:100%}
   --r-lg:16px;
   --r-md:14px;
 
-  /* 三栏栅格：左栏 240 / 主流 600 / 右栏 336 */
+  /* 三栏栅格：左栏 180 / 主流 600 / 右栏 336 */
   --main-w:600px;
   --aside-w:336px;
-  --rail-w:240px;
+  --rail-w:180px;
   /* 后台侧栏的宽度与前台侧栏不同：模块名比目的地名长，需要更宽。 */
   --rail-admin-w:230px;
   --pad:16px;
@@ -76,9 +76,11 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 a{color:inherit;text-decoration:none}
 h1,h2,h3,p{margin:0}
 .sprite{position:absolute;width:0;height:0;overflow:hidden}
-/* 视觉隐藏。sr-only 是显式用法；读屏要读却不该占版面的文字放这里。左栏不在此列：它带
-   文字，品牌名与每一项的标签都直接可见。 */
-.sr-only{
+/* 视觉隐藏。sr-only 是显式用法；左栏是图标式导航，**导航每一项的文字**不出现，
+   但仍留在无障碍树里（每一项另带 title 提示）。品牌名不在此列：它是可见文字，
+   因为「这是哪个站」不是图标能表达的事。 */
+.sr-only,
+.rail-left .nav-item .label{
   position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0;
 }
@@ -137,18 +139,16 @@ h1,h2,h3,p{margin:0}
 .main{min-width:0;min-height:100vh;min-height:100dvh}
 
 /* ---------- 5. 左栏 ---------- */
-/* 左栏带文字，和后台侧栏说同一套语言：品牌行、五个目的地、账号区。五项是有意的取舍：
-   外观是个开关而不是一个页面，它归品牌行右端；「我的」原本直接链到 /login，而 /login
-   对已登录的人只是空跳转，于是它归账号区，未登录时才出现，并且就叫「登录」。 */
+/* 左栏是图标栏：品牌锁定组合在最上面，五个目的地在中间，控件组在最下面，三者都居中。
+   导航**不带文字**——文字留在无障碍树里，鼠标有 title 提示；只有品牌名是可见文字。
+   五项而不是七项：外观是开关不是页面，归控件组；「我的」对已登录的人只是空跳转，
+   也归控件组，未登录时才出现，并且就叫「登录」。 */
 .rail-top{width:100%}
-.rail-head{
-  display:flex;align-items:center;gap:6px;
-  width:100%;margin-bottom:10px;
-}
 .brand{
-  display:flex;align-items:center;gap:10px;min-width:0;
-  flex:1 1 auto;
-  padding:7px 8px;border-radius:12px;
+  display:flex;align-items:center;justify-content:center;gap:9px;
+  width:100%;min-width:0;
+  padding:7px 8px;margin-bottom:8px;
+  border-radius:14px;
   transition:background .12s ease;
 }
 .brand:hover{background:var(--hover)}
@@ -158,38 +158,37 @@ h1,h2,h3,p{margin:0}
   border-radius:11px;
   background:var(--mark-bg);color:var(--mark-fg);
 }
-/* 站点名必须看得见：它是这一栏的头，也是左栏存在的理由之一。窄到放不下时截断而不是挤掉
-   右侧的开关。 */
+/* 品牌名是这一栏唯一的可见文字，所以它得自己撑起「刊头」这层意思：衬线体、一点点字距，
+   比无衬线加粗更像一本刊物的名字。字体全部取自系统已有的衬线——macOS 的 Songti SC /
+   Didot、Windows 的 SimSun、Android 的 Noto Serif CJK，**不下载任何字体文件**：
+   站点名是站长自己填的任意文本，自托管的 CJK 字体只能整包（5MB 起），
+   对一个 1 核 500MB 的项目不划算；拉丁部分先挑 Didot / Bodoni 这类高对比衬线。 */
 .brand-name{
-  font-size:17px;font-weight:800;letter-spacing:-.01em;
+  font-family:"Didot","Bodoni 72","Iowan Old Style","Palatino Linotype",
+    Georgia,"Songti SC","STSong","Source Han Serif SC","Noto Serif CJK SC",
+    "SimSun",serif;
+  font-size:19px;font-weight:600;letter-spacing:.01em;line-height:1.2;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
-/* 外观开关属于这一栏（顶栏那个只在窄屏出现），但它是开关不是页面，所以不占导航的一格。 */
-.rail-toggle{
-  display:grid;place-items:center;
-  width:34px;height:34px;flex:0 0 34px;border-radius:50%;
-  color:var(--muted);
-  transition:background .12s ease,color .12s ease;
-}
-.rail-toggle:hover{background:var(--hover-strong);color:var(--ink)}
 
 .nav{display:flex;flex-direction:column;gap:2px;width:100%}
+/* 图标钮：整行宽的圆角块、图标居中，当前项用底色表达而不是加粗文字——没有文字可加粗。 */
 .nav-item{
-  display:flex;align-items:center;gap:12px;
-  width:100%;padding:10px 12px;border-radius:12px;
-  font-size:15px;font-weight:500;color:var(--ink);text-align:left;
+  display:flex;align-items:center;justify-content:center;
+  width:100%;height:46px;padding:0;border-radius:14px;
+  color:var(--ink);
   transition:background .12s ease,color .12s ease;
 }
 .nav-item:hover{background:var(--hover)}
-.nav-item.on{background:var(--accent-soft);color:var(--accent);font-weight:700}
+.nav-item.on{background:var(--accent-soft);color:var(--accent)}
 .nav-item.on .ic{stroke-width:2.2}
 
-/* 账号区：由 .rail-left 的 space-between 顶到底部，横线把它和目的地分开。站长后台只在
-   站长登录时渲染（读者拿到的只是一条必然 403 的链接）；未登录时这一格是「登录」。 */
+/* 控件组：由 .rail-left 的 space-between 顶到底部，横线把它和目的地分开。外观开关在这里，
+   未登录时「登录」也在这里。 */
 .rail-foot{
   width:100%;
   display:flex;flex-direction:column;gap:2px;
-  padding-top:12px;
+  padding-top:10px;
   border-top:1px solid var(--line);
 }
 

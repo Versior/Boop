@@ -159,16 +159,14 @@ func TestDetailPhotoIsNotCropped(t *testing.T) {
 	}
 }
 
-// The left rail used to be a 68px strip of seven identical circles: the brand
-// was a mark with no name beside it, and three of the seven were not
-// destinations at all - a theme switch, a second copy of that switch, and a link
-// to /login that is a no-op for anyone already signed in. This pins the shape it
-// has now: the site's name next to its mark, exactly five destinations, the
-// switch as a control of its own, and an account area that follows the session.
-//
-// Visibility itself is CSS's job and cannot be asserted here, but the two
-// selectors that used to hide the rail's text are checked below: putting them
-// back is precisely what "no brand name next to the logo" looked like.
+// The left rail is an icon rail with exactly one visible word in it: the site's
+// name beside its mark. It used to be a 68px strip of seven identical circles
+// with that name hidden, and three of the seven were not destinations at all - a
+// theme switch, a second copy of that switch, and a link to /login that is a
+// no-op for anyone already signed in. This pins the shape it has now: five
+// destinations, the switch and the account entries in a control group below
+// them, and the name left visible. The stylesheet is read at the end because
+// visibility is CSS's job and "no brand name next to the logo" was a CSS bug.
 func TestTheFrontRailNamesTheBrandAndKeepsFiveDestinations(t *testing.T) {
 	f := newContentFixture(t)
 
@@ -216,11 +214,25 @@ func TestTheFrontRailNamesTheBrandAndKeepsFiveDestinations(t *testing.T) {
 		t.Error("a signed-in session is still offered the sign-in page")
 	}
 
+	// One visible word and only one: the site's name beside its mark, and no text
+	// inside the navigation. Both halves of that were asked for by name ("there
+	// is no brand name next to the logo" / "the navigation takes no text"), so
+	// both are pinned here. Hiding is CSS's job, hence reading the stylesheet:
+	// the labels stay behind in the accessibility tree either way.
 	css := f.do(t, http.MethodGet, "/static/app.css", "", nil, nil).Body.String()
-	for _, hidden := range []string{".rail-left .nav-item .label", ".rail-left .brand-name,"} {
-		if strings.Contains(css, hidden) {
-			t.Errorf("app.css hides the rail's own text again via %q", hidden)
-		}
+	start := strings.Index(css, ".sr-only")
+	if start < 0 {
+		t.Fatal("app.css has no .sr-only rule")
+	}
+	group := css[start:]
+	if end := strings.Index(group, "{"); end >= 0 {
+		group = group[:end]
+	}
+	if !strings.Contains(group, ".rail-left .nav-item .label") {
+		t.Errorf("the rail's navigation labels are visible again, and the owner asked for icons only:\n%s", group)
+	}
+	if strings.Contains(group, ".rail-left .brand-name") {
+		t.Errorf("the rail hides its brand name again:\n%s", group)
 	}
 }
 

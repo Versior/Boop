@@ -142,55 +142,56 @@
   </aside>
   {{else}}
   <!-- ========== 左栏 ========== -->
-  <!-- 左栏带文字，和后台侧栏说同一套语言：最上面是品牌行（标记 + 站点名 + 外观开关），中间
-       是五个目的地，最下面是账号区。五项而不是七项：外观是个开关而不是一个页面，它归品牌行；
-       「我的」原本直接链到 /login，可 /login 对已登录的人只是空跳转，于是它归账号区，
-       未登录时才出现，并且就叫「登录」。 -->
+  <!-- 左栏是图标栏：最上面是品牌锁定组合（标记 + 站点名），中间是五个目的地，最下面是控件组。
+       导航**不带文字**，每一项的文字留在无障碍树里（.sr-only）并另带 title 提示，读屏与鼠标
+       都还知道那是什么；只有品牌名是可见文字，因为「这是哪个站」不属于图标能表达的事。
+       五项而不是七项：外观是个开关而不是一个页面，它归底部控件组；「我的」原本直接链到 /login，
+       而 /login 对已登录的人只是空跳转，于是它也归控件组，未登录时才出现，并且就叫「登录」。 -->
   <aside class="rail-left" data-rail>
     <div class="rail-top">
-      <div class="rail-head">
-        <a class="brand" href="/" aria-label="{{.SiteName}} 首页">
-          <span class="brandmark" aria-hidden="true"><svg class="ic ic-logo" viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
-          <span class="brand-name">{{.SiteName}}</span>
-        </a>
-        <button class="rail-toggle" type="button" data-theme-toggle aria-label="切换到深色主题" title="切换到深色主题">
-          <svg class="ic ic-moon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-moon"/></svg>
-          <svg class="ic ic-sun" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sun"/></svg>
-        </button>
-      </div>
+      <a class="brand" href="/" aria-label="{{.SiteName}} 首页">
+        <span class="brandmark" aria-hidden="true"><svg class="ic ic-logo" viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
+        <span class="brand-name">{{.SiteName}}</span>
+      </a>
       <nav class="nav" aria-label="主导航">
-        <a class="nav-item{{if eq .Filter ""}} on{{end}}" href="/"{{if eq .Filter ""}} aria-current="page"{{end}}>
+        <a class="nav-item{{if eq .Filter ""}} on{{end}}" href="/"{{if eq .Filter ""}} aria-current="page"{{end}} title="首页">
           <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-home"/></svg><span class="label">首页</span>
         </a>
-        <a class="nav-item{{if eq .Filter "search"}} on{{end}}" href="/search"{{if eq .Filter "search"}} aria-current="page"{{end}}>
+        <a class="nav-item{{if eq .Filter "search"}} on{{end}}" href="/search"{{if eq .Filter "search"}} aria-current="page"{{end}} title="搜索">
           <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg><span class="label">搜索</span>
         </a>
-        <a class="nav-item{{if eq .Filter "article"}} on{{end}}" href="/?type=article"{{if eq .Filter "article"}} aria-current="page"{{end}}>
+        <a class="nav-item{{if eq .Filter "article"}} on{{end}}" href="/?type=article"{{if eq .Filter "article"}} aria-current="page"{{end}} title="文章">
           <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-article"/></svg><span class="label">文章</span>
         </a>
-        <a class="nav-item{{if eq .Filter "photo"}} on{{end}}" href="/?type=photo"{{if eq .Filter "photo"}} aria-current="page"{{end}}>
+        <a class="nav-item{{if eq .Filter "photo"}} on{{end}}" href="/?type=photo"{{if eq .Filter "photo"}} aria-current="page"{{end}} title="摄影">
           <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-camera"/></svg><span class="label">摄影</span>
         </a>
-        <a class="nav-item{{if eq .Filter "bookmarks"}} on{{end}}" href="/bookmarks"{{if eq .Filter "bookmarks"}} aria-current="page"{{end}}>
+        <a class="nav-item{{if eq .Filter "bookmarks"}} on{{end}}" href="/bookmarks"{{if eq .Filter "bookmarks"}} aria-current="page"{{end}} title="收藏">
           <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bookmark"/></svg><span class="label">收藏</span>
         </a>
       </nav>
     </div>
-    <!-- 账号区由 .rail-left 的 space-between 顶到底部，横线把它和目的地分开。站长后台只有
-         站长看得到（读者拿到的只是一条必然 403 的链接），退出登录是每个会话都要有的：没有它，
-         已登录的人在这套界面里没有任何办法结束会话。未登录时这一格是回到登录页的那条路。 -->
+    <!-- 控件组由 .rail-left 的 space-between 顶到底部，横线把它和目的地分开。外观开关在这里，
+         因为它是开关而不是页面；站长后台只有站长看得到（读者拿到的只是一条必然 403 的链接）；
+         退出登录是每个会话都要有的，没有它，已登录的人在这套界面里没有任何办法结束会话。
+         未登录时这一格是回到登录页的那条路。 -->
     <div class="rail-foot">
+      <button class="nav-item" type="button" data-theme-toggle aria-label="切换到深色主题" title="切换到深色主题">
+        <svg class="ic ic-nav ic-moon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-moon"/></svg>
+        <svg class="ic ic-nav ic-sun" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sun"/></svg>
+        <span class="label">外观</span>
+      </button>
       {{if .SignedIn}}
       {{if .Owner}}
-      <a class="nav-item" href="/admin">
+      <a class="nav-item" href="/admin" title="站长后台">
         <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-settings"/></svg><span class="label">站长后台</span>
       </a>
       {{end}}
-      <button class="nav-item" type="button" data-logout>
+      <button class="nav-item" type="button" data-logout title="退出登录">
         <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-logout"/></svg><span class="label">退出登录</span>
       </button>
       {{else}}
-      <a class="nav-item" href="/login">
+      <a class="nav-item" href="/login" title="登录">
         <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-login"/></svg><span class="label">登录</span>
       </a>
       {{end}}
