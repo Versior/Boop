@@ -1,0 +1,99 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+# A new push to the same ref makes the running one obsolete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # The gates AGENTS.md runs before a task is called done, in the same order, so
+  # a local run and this job can only disagree about the machine.
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The whitespace check below compares against the pre-push commit, so
+          # the history has to be present rather than a single-commit clone.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # `gofmt -l` and not `gofmt -w`: a formatter that rewrites the tree in CI
+      # would erase the difference it was asked to report.
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      # Guards the class of mistake that shipped once already: a package used by
+      # the code but still marked indirect in go.mod. -diff reports the change
+      # instead of writing it, so the message is the diff itself.
+      - name: go.mod is tidy
+        run: go mod tidy -diff
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test
+        run: go test ./... -count=1
+
+      # The whole reason modernc.org/sqlite is the driver is that the project
+      # ships one binary with no CGO. This is the check: a new dependency that
+      # needs a C compiler fails here and nowhere else.
+      - name: static binary
+        run: CGO_ENABLED=0 go build -trimpath -o /dev/null ./cmd/boop
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: app.js parses
+        run: node --check web/static/app.js
+
+      # AGENTS.md runs this on the working tree before committing, where the
+      # tree still holds the changes. Here the tree is clean, so the same check
+      # is aimed at what the push added: the range from the merge base (or the
+      # pre-push commit) to HEAD.
+      - name: no whitespace errors in the new commits
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base="$(git rev-list --max-parents=0 HEAD)"
+          fi
+          echo "checking $base..HEAD"
+          git diff --check "$base" HEAD
+
+  # Split out because it is several times slower than everything above: a
+  # formatter slip and a data race do not deserve the same queue.
+  race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Single process, one database connection and a request context per page:
+      # the concurrency this catches is the kind a single-core deployment meets
+      # first, and it is invisible without the detector.
+      - name: test with the race detector
+        run: go test -race ./... -count=1

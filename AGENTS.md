@@ -74,6 +74,8 @@ git diff --check
 
 涉及部署或性能时，还要执行计划中的 race、smoke 和实际进程测量。所有完成声明必须附带真实命令结果；失败不得伪装为通过。
 
+同一套门禁由 `.github/workflows/ci.yml` 执行，另有三条本机不强制但 CI 会拦的检查：`go mod tidy -diff`（依赖标注与代码不一致时直接失败）、`CGO_ENABLED=0 go build ./cmd/boop`（新增任何需要 C 编译器的依赖都会在这里暴露），以及独立的 `go test -race ./...`。本地命令与 CI 只应因机器不同而产生差异。
+
 ## 提交约定
 
 - 改动保持聚焦，一项任务一个可审查提交。
