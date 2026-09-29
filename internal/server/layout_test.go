@@ -49,6 +49,55 @@ func TestBottomNavOffersSearch(t *testing.T) {
 	}
 }
 
+// TestEveryPageCarriesOneToastSlot pins the shared toast container. app.js
+// drops a message on the floor when #toast is missing - showToast() returns
+// early - so a page that calls it without rendering the slot loses its only
+// feedback. The detail page did exactly that for comment submission and
+// deletion, which is how this test came to exist.
+//
+// The count matters as much as the presence: the slot used to be declared by
+// each page separately, so the fix moved it into the shell and every template
+// that still declares its own copy would produce a second element with the
+// same id.
+func TestEveryPageCarriesOneToastSlot(t *testing.T) {
+	c := newContentFixture(t)
+	created := c.createOK(t, map[string]any{
+		"type": "moment", "status": "published", "body": "提示条回归用例",
+	})
+	slug := created["slug"].(string)
+
+	pages := []struct {
+		name   string
+		target string
+		cookie *http.Cookie
+	}{
+		{"feed", "/", nil},
+		{"feed, signed in", "/", c.cookie},
+		{"detail", "/p/" + slug, nil},
+		{"search", "/search?q=提示", nil},
+		{"bookmarks", "/bookmarks", c.cookie},
+		{"login", "/login", nil},
+		{"register", "/register", nil},
+		{"admin comments", "/admin/comments", c.cookie},
+		{"admin settings", "/admin/settings", c.cookie},
+	}
+	for _, page := range pages {
+		t.Run(page.name, func(t *testing.T) {
+			rec := c.do(t, http.MethodGet, page.target, "", nil, page.cookie)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET %s: status = %d, want 200", page.target, rec.Code)
+			}
+			body := rec.Body.String()
+			if got := strings.Count(body, `id="toast"`); got != 1 {
+				t.Errorf("GET %s renders %d toast containers, want 1", page.target, got)
+			}
+			if got := strings.Count(body, `data-toast-message`); got != 1 {
+				t.Errorf("GET %s renders %d toast message slots, want 1", page.target, got)
+			}
+		})
+	}
+}
+
 func TestDetailPhotoIsNotCropped(t *testing.T) {
 	// The card is one row of a list of thumbnails and keeps one uniform ratio;
 	// the detail page is where a photograph is the content, so the cropped part

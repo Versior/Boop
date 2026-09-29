@@ -217,6 +217,12 @@
   </a>
 </nav>
 
+<!-- ========== 全局提示条 ========== -->
+<!-- 提示条是 position:fixed 的浮层，与具体页面无关，因此放在骨架里只声明一次：
+     app.js 的 showToast() 找不到 #toast 时会静默丢弃提示，任何一个模板漏掉都会让
+     该页的操作反馈凭空消失（详情页的评论提交与删除曾经就是这样）。 -->
+<div class="toast" id="toast" role="status" aria-live="polite" hidden><span class="toast-msg" data-toast-message></span></div>
+
 </body>
 </html>
 {{end}}
