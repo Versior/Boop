@@ -202,9 +202,9 @@ func TestHomeRendersEmbeddedShell(t *testing.T) {
 	if strings.Contains(body, "unsafe-inline") {
 		t.Error("unexpected inline marker in rendered page")
 	}
-	// 左栏主导航与移动端底部导航各标记一次当前项。
-	if got := strings.Count(body, `aria-current="page"`); got != 2 {
-		t.Errorf("aria-current occurrences = %d, want 2", got)
+	// 左栏主导航、移动端底部导航与首页的内容类型行各标记一次当前项。
+	if got := strings.Count(body, `aria-current="page"`); got != 3 {
+		t.Errorf("aria-current occurrences = %d, want 3", got)
 	}
 }
 
@@ -221,8 +221,15 @@ func TestHomeMarksActiveFilter(t *testing.T) {
 	} {
 		t.Run(tt.target, func(t *testing.T) {
 			body := do(t, handler, http.MethodGet, tt.target, nil).Body.String()
-			if got := strings.Count(body, `aria-current="page"`); got != 2 {
-				t.Fatalf("%s marks %d active navigation items, want 2", tt.target, got)
+			// Three surfaces mark the current entry: the desktop rail, the mobile
+			// bottom navigation and, on this page, the content-type row.
+			if got := strings.Count(body, `aria-current="page"`); got != 3 {
+				t.Fatalf("%s marks %d active items, want 3", tt.target, got)
+			}
+			// The type row marks the tab the request asked for rather than always
+			// marking its first entry.
+			if !strings.Contains(body, `class="type-tab on" href="`+tt.target+`" aria-current="page"`) {
+				t.Errorf("%s does not mark its own type tab", tt.target)
 			}
 			if !strings.Contains(body, tt.active) {
 				t.Errorf("%s does not render the %s label", tt.target, tt.active)

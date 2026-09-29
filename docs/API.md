@@ -188,10 +188,10 @@ GitHub 登录规则：
 设置接口规则：
 
 - 两个接口都只允许 owner：游客 401 `unauthorized`，读者 403 `forbidden`。
-- `GET` 返回 `site_name`、`site_description`、`site_avatar_url`、`site_icon_url`、`site_timezone`、`page_size`、`registration_enabled`、`comments_enabled`、`comments_moderation_enabled`、`ai_enabled`、`ai_base_url`、`ai_chat_model`、`ai_embedding_model`、`ai_author_status_ttl_hours`、`storage_mode`、`storage_endpoint`、`storage_region`、`storage_bucket`、`storage_prefix`、`storage_public_url`，以及 `github_client_id_set`、`github_client_secret_set`、`ai_api_key_set`、`storage_access_key_id_set`、`storage_secret_access_key_set`、`master_key` 六个布尔标志。**任何密钥明文都不会出现在响应里**，页面只知道某个密钥是否已配置。
+- `GET` 返回 `site_name`、`site_description`、`site_avatar_url`、`site_cover_url`、`site_icon_url`、`site_timezone`、`page_size`、`registration_enabled`、`comments_enabled`、`comments_moderation_enabled`、`ai_enabled`、`ai_base_url`、`ai_chat_model`、`ai_embedding_model`、`ai_author_status_ttl_hours`、`storage_mode`、`storage_endpoint`、`storage_region`、`storage_bucket`、`storage_prefix`、`storage_public_url`，以及 `github_client_id_set`、`github_client_secret_set`、`ai_api_key_set`、`storage_access_key_id_set`、`storage_secret_access_key_set`、`master_key` 六个布尔标志。**任何密钥明文都不会出现在响应里**，页面只知道某个密钥是否已配置。
 - 响应里另有四个描述**当前生效状态**的只读字段：`storage_environment`（站点还没有保存过存储分类，因此正在按 `BOOP_R2_*` 跑）以及 `storage_effective_mode`、`storage_effective_bucket`、`storage_effective_public_url`（进程此刻实际使用的位置）。它们取自运行中的配置而不是存下的行，所以它们报告的是「真的生效了」而不是「写下来了」；这四个字段在 `PATCH` 请求里会被忽略。
 - `PATCH` 只接受上述字段加上五个密钥字段（`github_client_id`、`github_client_secret`、`ai_api_key`、`storage_access_key_id`、`storage_secret_access_key`）和 `clear_secret`；存放位置只能选本地目录或对象存储（**不能填任意上传路径**），单文件大小上限与允许的 MIME 类型只能由环境变量配置，其余未知字段出现即 400 `invalid_body`。
-- `site_avatar_url` 与 `site_icon_url` 允许为空（分别表示不配置站点头像、不配置站点图标），非空时必须是**无凭据的 http/https 绝对 URL**，且不超过 2048 个字符；相对路径、其它协议、带 `user:pass@` 的值一律 400 `invalid_settings`。`site_icon_url` 是独立的浏览器标签页图标，只影响 `<link rel="icon">`，不参与页面里的头像渲染。
+- `site_avatar_url`、`site_cover_url` 与 `site_icon_url` 允许为空（分别表示不配置站点头像、不在首页画封面、不配置站点图标），非空时必须是**无凭据的 http/https 绝对 URL**，且不超过 2048 个字符；相对路径、其它协议、带 `user:pass@` 的值一律 400 `invalid_settings`。`site_icon_url` 是独立的浏览器标签页图标，只影响 `<link rel="icon">`，不参与页面里的头像渲染；`site_cover_url` 只用于首页作者头部与索引页的链接预览。
 - 存储字段的校验分两层。**单个字段**：`storage_mode` 只能是 `local` 或 `object`；`storage_endpoint` 与 `storage_public_url` 允许为空，非空时必须是**无凭据、无 query、无 fragment 的 http/https 绝对 URL**；`storage_region`、`storage_bucket`、`storage_prefix` 是单行短文本。**整组**：当 `storage_mode` 为 `object` 时，Endpoint、桶名、读取地址与两个凭据都必填，缺任何一项返回 400 `invalid_settings` 并列出缺的字段名，**且这一次请求里同组的其它字段也不会被写入**。整组校验读的是「这次改动落下去之后」的状态，所以只提交 `{"storage_mode":"object"}` 而凭据早已存好是允许的，而把对象存储正在用的某个凭据 `clear_secret` 掉会被拒绝——除非同一次请求先把 `storage_mode` 改回 `local`。
 - `PATCH` 成功后进程会重新读取存储配置，因此**改存放位置不需要重启**；重新读取失败时返回 500 而不是静默沿用旧位置。
 - 密钥字段为空字符串表示**保持不变**（不会清空）；删除必须显式列出密钥名，例如 `{"clear_secret":["github.client_secret"]}`，删除不存在的密钥是幂等的；`clear_secret` 里的未知名返回 400 `invalid_settings`。
@@ -219,7 +219,10 @@ AI 接口规则：
 
 ## HTML 页面
 
-- `GET /` 首页 SSR。
+- `GET /` 首页 SSR：作者头部 + 内容类型行 + 信息流。
+  - 作者头部（`.author-head`）是站点自己的门面而不是用户主页：封面图（`site_cover_url`，留空则整条横带不渲染）、大头像（与信息流同一套 `site_avatar_url` → 站长账号 → 内置 SVG 的链）、站长标识与一句简介（`site_description`）。Boop 只有一个作者、没有关注关系（`docs/PRODUCT.md` §7），因此这里没有关注/粉丝这类计数。
+  - 类型行（`.type-tabs`）只列信息流接口真正接受的三个筛选值——全部 `/`、文章 `/?type=article`、摄影 `/?type=photo`——每一项带**已发布内容条数**（一条 `GROUP BY type` 的真实 COUNT，与 `Feed` 同一条可见性规则：草稿、归档与软删除都不计入）。动态没有自己的入口，因为动态只出现在不筛选的信息流里（`docs/PRODUCT.md` §5.1）；因此这一行不会出现服务端会以 400 回绝的筛选值。条数是这一行存在的理由：左栏与底部导航已经能走到同样的三个视图。
+  - 作者头部只画在信息流的第一页：带 `cursor` 的续页不重复它，但类型行照画（它同时是回到顶部的那条路，且条数描述整个站点而不是这一页）。
 - `GET /p/{slug}` 内容详情 SSR。
 - `GET /search?q=&cursor=` 搜索结果 SSR：空查询是提示态，无结果（含只有标点的查询）是带转义查询词的空态，翻页用同源“加载更多”链接并保留 `q`；左栏“搜索”项在 `/search` 高亮，移动端底部导航不变。有结果时文案是“本页 N 条”，因为服务端没有 COUNT 查询、`len` 只是本页数量，不冒充总数。
 - 每个页面的 `<head>` 都带 `<link rel="alternate" type="application/rss+xml" href="/feed.xml">` 发现链接。
@@ -233,14 +236,14 @@ AI 接口规则：
 
 品牌与头像：
 
-- `site_name`、`site_description`、`site_avatar_url` 注入所有页面的外壳：标题后缀、桌面与移动品牌名、品牌 `aria-label`、搜索页输入框的标签与占位符、默认 `meta description`，以及首页可见文案（`sr-only` 标题与底部说明）。页面外壳不再硬编码任何品牌名。
+- `site_name`、`site_description`、`site_avatar_url` 注入所有页面的外壳：标题后缀、桌面与移动品牌名、品牌 `aria-label`、搜索页输入框的标签与占位符、默认 `meta description`，以及首页可见文案（`sr-only` 标题与底部说明）。页面外壳不再硬编码任何品牌名。`site_cover_url` 不进外壳，它只画在首页作者头部与索引页的链接预览里。
 - 渲染头像的优先级是 `site_avatar_url` → 站长账号 `users.avatar_url` → 内置 SVG，用于快捷发布、信息流卡片、收藏卡片与内容详情。页面 `<link rel="icon">` 用另一条链：`site_icon_url` → `site_avatar_url` → 内置 SVG 图标，因此标签页图标可以独立于头像配置。两条链互不影响。CSP 的 `img-src` 为 `'self' data: http: https:`，否则配置的绝对地址会被浏览器直接拦掉；脚本、样式与连接仍然是同源（`script-src 'self'`、`connect-src 'self'`）。
 - 展示路径读取设置失败时回退到默认值并写一条告警（页面仍然可用）；而设置表单和写入路径在设置损坏时返回 500 / 4xx，避免把默认值写回去覆盖真实设置。
 - 首页、内容详情、收藏页在已经读过设置时复用同一次读取（只注入外壳），不会为品牌再查一次库。
 
 页面元数据（每个 HTML 页面）：
 
-- 每个页面都带 `<link rel="canonical">`、`og:type`、`og:site_name`、`og:url`、`og:title`、`og:description`、`twitter:card`；详情页另有 `article:published_time` 与 `article:modified_time`。索引页另有 `og:image`（`site_avatar_url` → `site_icon_url`，取到了就让 `twitter:card` 变成 `summary_large_image`），详情页只有在**自己**有封面图时才声明 `og:image`，不借站点品牌图然后在结构化数据里声称它是这篇文章的图。
+- 每个页面都带 `<link rel="canonical">`、`og:type`、`og:site_name`、`og:url`、`og:title`、`og:description`、`twitter:card`；详情页另有 `article:published_time` 与 `article:modified_time`。索引页另有 `og:image`（`site_cover_url` → `site_avatar_url` → `site_icon_url`：封面图是唯一按全宽观看绘制的那张图，因此链接预览是一张横幅而不是一次方形裁切；取到了就让 `twitter:card` 变成 `summary_large_image`），详情页只有在**自己**有封面图时才声明 `og:image`，不借站点品牌图然后在结构化数据里声称它是这篇文章的图。
 - 规范地址由 `BOOP_BASE_URL` 加上**百分号编码**的请求路径拼成，**查询串被丢掉**：`/`、`/?type=article`、`/?type=photo`、`/?cursor=...` 全部归到 `/`。它们渲染同一个 `<title>` 与同一批卡片，只是顺序或筛选不同，为一份文档声明多个地址只会分散抓取信号；`cursor` 更是能按翻页生成无限多个 URL。请求 Host 与 `X-Forwarded-*` 从不参与，否则伪造头就能让本进程对外宣告别人的源站。
 - `<title>` 与 `og:title` 由同一个 `pageMeta.DocumentTitle` 方法生成，不会各写一套而漂移。详情页两者优先用 `posts.seo_title`，而可见的 `<h1>` 仍用真实标题：为搜索结果挑的措辞不一定是页面该显示的措辞。
 - 描述优先 `posts.seo_description`，否则摘要，否则正文里**读者能看到的文本**。文章正文走的是与 RSS 描述同一条 goldmark + bluemonday 管线：把已被净化掉的 `<script>` 先还原成摘要文本再发出来，等于把写入时清掉的内容又放回机器可读副本里；标题回退同样取可见文本，所以 `## 小标题` 不会连着井号一起进 `<h1>`。

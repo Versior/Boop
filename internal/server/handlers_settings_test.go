@@ -147,7 +147,7 @@ func TestPatchSettingsUpdatesValues(t *testing.T) {
 	login := f.login(t, owner.Email, authPassword, nil)
 	cookie, csrf := sessionCookie(t, login), decodeData(t, login)["csrf_token"].(string)
 
-	rec := f.patchSettings(t, `{"site_name":"少爷的博客","site_description":"海边","site_avatar_url":"https://cdn.example.com/avatar.png","site_icon_url":"https://cdn.example.com/favicon.png","site_timezone":"UTC",
+	rec := f.patchSettings(t, `{"site_name":"少爷的博客","site_description":"海边","site_avatar_url":"https://cdn.example.com/avatar.png","site_cover_url":"https://cdn.example.com/cover.jpg","site_icon_url":"https://cdn.example.com/favicon.png","site_timezone":"UTC",
 		"page_size":42,"registration_enabled":false,"comments_enabled":false,"comments_moderation_enabled":true,
 		"ai_enabled":true,"ai_base_url":"https://api.example.com/v1","ai_chat_model":"gpt-4o-mini",
 		"ai_embedding_model":"text-embedding-3-small","ai_author_status_ttl_hours":24}`, cookie, csrf)
@@ -159,6 +159,7 @@ func TestPatchSettingsUpdatesValues(t *testing.T) {
 		"site_name":                   "少爷的博客",
 		"site_description":            "海边",
 		"site_avatar_url":             "https://cdn.example.com/avatar.png",
+		"site_cover_url":              "https://cdn.example.com/cover.jpg",
 		"site_icon_url":               "https://cdn.example.com/favicon.png",
 		"site_timezone":               "UTC",
 		"page_size":                   float64(42),
@@ -240,6 +241,9 @@ func TestPatchSettingsRejectsUnknownFieldsAndValues(t *testing.T) {
 		{"relative icon", `{"site_icon_url":"/favicon.png"}`, http.StatusBadRequest, "invalid_settings"},
 		{"icon with a wrong scheme", `{"site_icon_url":"javascript:alert(1)"}`, http.StatusBadRequest, "invalid_settings"},
 		{"icon with credentials", `{"site_icon_url":"https://user:pass@example.com/favicon.png"}`, http.StatusBadRequest, "invalid_settings"},
+		{"relative cover", `{"site_cover_url":"/cover.jpg"}`, http.StatusBadRequest, "invalid_settings"},
+		{"cover with a wrong scheme", `{"site_cover_url":"javascript:alert(1)"}`, http.StatusBadRequest, "invalid_settings"},
+		{"cover with credentials", `{"site_cover_url":"https://user:pass@example.com/cover.jpg"}`, http.StatusBadRequest, "invalid_settings"},
 		{"unknown secret to clear", `{"clear_secret":["github.nope"]}`, http.StatusBadRequest, "invalid_settings"},
 		{"not an object", `[]`, http.StatusBadRequest, "invalid_body"},
 		{"trailing content", `{"site_name":"a"}{"site_name":"b"}`, http.StatusBadRequest, "invalid_body"},
@@ -603,8 +607,9 @@ func TestSiteIconFaviconFallback(t *testing.T) {
 	}
 }
 
-// TestConfiguredAvatarRendersOnEveryContentSurface walks the four documented
-// places: the quick publisher, a feed card, a bookmark card and the detail page.
+// TestConfiguredAvatarRendersOnEveryContentSurface walks every documented
+// place: the author header, the quick publisher, a feed card, a bookmark card
+// and the detail page.
 func TestConfiguredAvatarRendersOnEveryContentSurface(t *testing.T) {
 	f := newContentFixture(t)
 	const avatarURL = "https://cdn.example.com/site-avatar.png"
@@ -625,9 +630,15 @@ func TestConfiguredAvatarRendersOnEveryContentSurface(t *testing.T) {
 	if home.Code != http.StatusOK {
 		t.Fatalf("home: status = %d, want 200", home.Code)
 	}
-	// The owner's session renders both the quick publisher and the feed card.
-	if got := strings.Count(home.Body.String(), marker); got != 2 {
-		t.Errorf("the home page renders %d configured avatars, want 2 (composer and card)", got)
+	// The owner's session renders the author header, the quick publisher and the
+	// feed card, all from the same configured avatar.
+	if got := strings.Count(home.Body.String(), marker); got != 3 {
+		t.Errorf("the home page renders %d configured avatars, want 3 (header, composer and card)", got)
+	}
+	// The header is the one surface that only appears on the first page of the
+	// feed, so it is worth naming rather than counting into the total above.
+	if !strings.Contains(home.Body.String(), `class="author-id"`) {
+		t.Error("the home page renders no author header")
 	}
 
 	detail := f.do(t, http.MethodGet, "/p/"+slug, "", nil, f.cookie)
@@ -865,7 +876,7 @@ func TestAdminSettingsPageAndIndex(t *testing.T) {
 	}{
 		{"site", "站点", []string{
 			`name="site_name"`, `name="site_description"`, `name="site_avatar_url"`,
-			`name="site_icon_url"`, `name="site_timezone"`, `name="page_size"`,
+			`name="site_cover_url"`, `name="site_icon_url"`, `name="site_timezone"`, `name="page_size"`,
 		}},
 		{"registration", "注册与评论", []string{
 			`name="registration_enabled"`, `name="comments_enabled"`, `name="comments_moderation_enabled"`,

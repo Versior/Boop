@@ -21,6 +21,7 @@ type settingsPayload struct {
 	SiteName                  string `json:"site_name"`
 	SiteDescription           string `json:"site_description"`
 	SiteAvatarURL             string `json:"site_avatar_url"`
+	SiteCoverURL              string `json:"site_cover_url"`
 	SiteIconURL               string `json:"site_icon_url"`
 	SiteTimezone              string `json:"site_timezone"`
 	PageSize                  int    `json:"page_size"`
@@ -66,6 +67,7 @@ type settingsRequest struct {
 	SiteName                  *string `json:"site_name"`
 	SiteDescription           *string `json:"site_description"`
 	SiteAvatarURL             *string `json:"site_avatar_url"`
+	SiteCoverURL              *string `json:"site_cover_url"`
 	SiteIconURL               *string `json:"site_icon_url"`
 	SiteTimezone              *string `json:"site_timezone"`
 	PageSize                  *int    `json:"page_size"`
@@ -120,6 +122,7 @@ func (s *server) settingsPayloadOf(ctx context.Context) (settingsPayload, error)
 		SiteName:                  values.SiteName,
 		SiteDescription:           values.SiteDescription,
 		SiteAvatarURL:             values.SiteAvatarURL,
+		SiteCoverURL:              values.SiteCoverURL,
 		SiteIconURL:               values.SiteIconURL,
 		SiteTimezone:              values.SiteTimezone,
 		PageSize:                  values.PageSize,
@@ -185,6 +188,9 @@ func (s *server) handlePatchSettingsAPI(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.SiteAvatarURL != nil {
 		values[settings.KeySiteAvatarURL] = *body.SiteAvatarURL
+	}
+	if body.SiteCoverURL != nil {
+		values[settings.KeySiteCoverURL] = *body.SiteCoverURL
 	}
 	if body.SiteIconURL != nil {
 		values[settings.KeySiteIconURL] = *body.SiteIconURL
@@ -355,7 +361,7 @@ var adminSettingsSections = []adminSettingsSection{
 	{
 		Key:   "site",
 		Label: "站点",
-		Hint:  "站点名称、简介、头像与图标、时区与每页条数。",
+		Hint:  "站点名称、简介、头像、封面图、图标、时区与每页条数。",
 	},
 	{
 		Key:   "registration",

@@ -91,9 +91,14 @@ func isPrivatePath(path string) bool {
 }
 
 // brandImage is the configured image that represents the whole site, used as the
-// link preview of the index surfaces. The avatar wins over the tab icon because
-// a preview is a picture of the site and an icon is drawn for sixteen pixels.
+// link preview of the index surfaces. The cover image wins: it is the one image
+// drawn to be seen at full width, so a preview built from it is a banner rather
+// than a square crop. The avatar comes next and the tab icon last, because an
+// icon is drawn for sixteen pixels.
 func brandImage(values settings.Values) string {
+	if values.SiteCoverURL != "" {
+		return values.SiteCoverURL
+	}
 	if values.SiteAvatarURL != "" {
 		return values.SiteAvatarURL
 	}

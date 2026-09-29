@@ -38,6 +38,7 @@ const (
 	KeySiteName                  = "site.name"
 	KeySiteDescription           = "site.description"
 	KeySiteAvatarURL             = "site.avatar_url"
+	KeySiteCoverURL              = "site.cover_url"
 	KeySiteIconURL               = "site.icon_url"
 	KeySiteTimezone              = "site.timezone"
 	KeyContentPageSize           = "content.page_size"
@@ -123,6 +124,7 @@ type Values struct {
 	SiteName                  string
 	SiteDescription           string
 	SiteAvatarURL             string
+	SiteCoverURL              string
 	SiteIconURL               string
 	SiteTimezone              string
 	PageSize                  int
@@ -148,6 +150,7 @@ func Defaults() Values {
 		SiteName:                  "Boop",
 		SiteDescription:           "遇事开心的个人博客",
 		SiteAvatarURL:             "",
+		SiteCoverURL:              "",
 		SiteIconURL:               "",
 		SiteTimezone:              "Asia/Shanghai",
 		PageSize:                  20,
@@ -456,7 +459,7 @@ func validate(key string, value any) error {
 		return validateText(key, value, 1, maxSiteNameRunes)
 	case KeySiteDescription:
 		return validateText(key, value, 0, maxDescriptionRunes)
-	case KeySiteAvatarURL, KeySiteIconURL:
+	case KeySiteAvatarURL, KeySiteCoverURL, KeySiteIconURL:
 		asset, err := requireString(key, value)
 		if err != nil {
 			return err
@@ -642,6 +645,7 @@ func fieldsOf(values *Values) map[string]any {
 		KeySiteName:                  &values.SiteName,
 		KeySiteDescription:           &values.SiteDescription,
 		KeySiteAvatarURL:             &values.SiteAvatarURL,
+		KeySiteCoverURL:              &values.SiteCoverURL,
 		KeySiteIconURL:               &values.SiteIconURL,
 		KeySiteTimezone:              &values.SiteTimezone,
 		KeyContentPageSize:           &values.PageSize,

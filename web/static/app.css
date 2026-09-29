@@ -249,6 +249,38 @@ h1,h2,h3,p{margin:0}
 }
 
 /* ---------- 7. 内容流 ---------- */
+/* 7.0 首页作者头部与内容类型行：这一段的编号在 7.1 之前，因为它在中栏里也排在信息流之前。 */
+/* Boop 只有一个作者、没有关注关系，所以这一块是站点自己的门面而不是用户主页：
+   封面图 + 大头像 + 站长标识 + 一句简介，不放关注/粉丝这类这里根本不存在的数字。 */
+.author-head{border-bottom:1px solid var(--line)}
+.author-cover{display:block;width:100%;aspect-ratio:3/1;background:var(--bg-soft);overflow:hidden}
+.author-cover img{display:block;width:100%;height:100%;object-fit:cover}
+.author-id{display:flex;align-items:flex-end;gap:14px;padding:0 var(--pad) 14px}
+/* 没有封面图时不留一条空横带，也不把头像往上顶：整块从内边距开始。 */
+.author-head.is-plain .author-id{padding-top:16px}
+.author-head.has-cover .author-id .avatar{margin-top:-42px}
+/* 头像比卡片上的 40px 大一圈并压住封面图的下沿，加一圈底色描边让它与封面分开。 */
+.author-id .avatar{width:84px;height:84px;border:4px solid var(--bg);background:var(--bg)}
+.author-meta{flex:1;min-width:0;padding-bottom:2px}
+.author-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.author-name{font-size:20px;font-weight:800;line-height:1.25;letter-spacing:-.01em}
+.author-bio{margin-top:4px;color:var(--muted);font-size:14px;line-height:1.5;word-break:break-word}
+
+/* 类型行只列信息流接口真正接受的筛选值（动态没有入口，见 docs/PRODUCT.md §5.1），
+   并且带条数：左栏的图标条已经能走到同样的三个视图，没有条数这一行就只是重复。 */
+.type-tabs{display:flex;align-items:stretch;border-bottom:1px solid var(--line)}
+.type-tab{
+  flex:1;display:flex;align-items:center;justify-content:center;gap:6px;
+  min-height:48px;
+  border-bottom:2px solid transparent;
+  color:var(--muted);font-size:14px;font-weight:600;
+  transition:background .12s ease,color .12s ease;
+}
+.type-tab:hover{background:var(--hover);color:var(--ink)}
+.type-tab.on{color:var(--ink);font-weight:700;border-bottom-color:var(--accent)}
+.type-tab-count{color:var(--muted-2);font-size:12px;font-variant-numeric:tabular-nums}
+.type-tab.on .type-tab-count{color:var(--accent)}
+
 .stream{display:block}
 .empty{
   padding:40px 16px 32px;

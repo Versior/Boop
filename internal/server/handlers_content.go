@@ -155,6 +155,31 @@ type postCard struct {
 	OwnerAvatar string
 }
 
+// feedTab is one entry of the home page content-type row. The row offers exactly
+// the filters the feed accepts (see content.Feed): moments have no tab of their
+// own because they only ever appear in the unfiltered feed
+// (docs/PRODUCT.md §5.1), and a tab that the server would answer with a 400 is
+// not offered at all.
+type feedTab struct {
+	Label  string
+	URL    string
+	Count  int
+	Active bool
+}
+
+// authorHeader is the block at the top of the feed: the cover image, the big
+// avatar and the one-line bio. It is the site's front door rather than a user
+// profile - Boop has a single author and no follow graph (docs/PRODUCT.md §7).
+type authorHeader struct {
+	// Show is false on a "load more" page, so the header appears once, where
+	// the feed starts, instead of above every additional page.
+	Show     bool
+	CoverURL string
+	Name     string
+	Avatar   string
+	Bio      string
+}
+
 // feedView drives the home page: the cards, the cursor that continues them and
 // the owner-only quick publisher.
 type feedView struct {
@@ -167,6 +192,10 @@ type feedView struct {
 	OwnerName    string
 	OwnerAvatar  string
 	ComposerMode string
+	// Header is the author block above the feed and Tabs is the content-type
+	// row below it.
+	Header authorHeader
+	Tabs   []feedTab
 	// AIAssist renders the writing assistant inside the composer. It is true only
 	// for the owner and only when the AI service is actually usable, so no owner
 	// ever gets a control that can only fail.
@@ -227,6 +256,23 @@ func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
 	states := s.viewerStates(r.Context(), r, postIDs(page.Posts))
 	viewer := s.socialViewer(r)
 	view.OwnerName, view.OwnerAvatar = s.authorIdentity(r.Context(), values)
+	// The header belongs to the top of the feed, so a cursor page leaves it out
+	// rather than repeating it above every additional page.
+	if r.URL.Query().Get("cursor") == "" {
+		view.Header = authorHeader{
+			Show:     true,
+			CoverURL: values.SiteCoverURL,
+			Name:     view.OwnerName,
+			Avatar:   view.OwnerAvatar,
+			Bio:      values.SiteDescription,
+		}
+	}
+	counts, err := content.ContentCounts(r.Context(), s.db)
+	if err != nil {
+		s.writeContentFailure(w, r, "content counts", err)
+		return
+	}
+	view.Tabs = feedTabs(filter, counts)
 	for _, post := range page.Posts {
 		card := s.cardOf(post, location)
 		card.CanReact = viewer.signedIn
@@ -522,6 +568,17 @@ func firstLine(text string) string {
 		return string(runes[:120])
 	}
 	return trimmed
+}
+
+// feedTabs builds the content-type row of the home page. It is derived from the
+// filter the request already passed through, so the marked entry can never
+// disagree with the page it is drawn on.
+func feedTabs(filter string, counts content.Counts) []feedTab {
+	return []feedTab{
+		{Label: "全部", URL: "/", Count: counts.Total, Active: filter == ""},
+		{Label: "文章", URL: "/?type=" + content.TypeArticle, Count: counts.Article, Active: filter == content.TypeArticle},
+		{Label: "摄影", URL: "/?type=" + content.TypePhoto, Count: counts.Photo, Active: filter == content.TypePhoto},
+	}
 }
 
 // filterOf maps a post type onto the navigation filter it belongs to.

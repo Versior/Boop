@@ -58,6 +58,11 @@
         </label>
         <p class="settings-hint">留空用站长账号头像，再为空用内置图标；只接受不带凭据的 http/https 绝对地址。</p>
         <label class="auth-field">
+          <span>封面图 URL</span>
+          <input name="site_cover_url" type="url" maxlength="2048" value="{{.Settings.SiteCoverURL}}" placeholder="https://example.com/cover.jpg">
+        </label>
+        <p class="settings-hint">首页作者头部顶端的横幅，横图效果最好。留空则首页不显示封面。</p>
+        <label class="auth-field">
           <span>站点图标 URL</span>
           <input name="site_icon_url" type="url" maxlength="2048" value="{{.Settings.SiteIconURL}}" placeholder="https://example.com/favicon.png">
         </label>

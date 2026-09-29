@@ -33,6 +33,7 @@ func TestDefaultsMatchDocumentedValues(t *testing.T) {
 		SiteName:                  "Boop",
 		SiteDescription:           "遇事开心的个人博客",
 		SiteAvatarURL:             "",
+		SiteCoverURL:              "",
 		SiteTimezone:              "Asia/Shanghai",
 		PageSize:                  20,
 		RegistrationEnabled:       true,
@@ -83,6 +84,7 @@ func TestSeedWritesEveryDocumentedKeyOnce(t *testing.T) {
 		"site.name":                   `"Boop"`,
 		"site.description":            `"遇事开心的个人博客"`,
 		"site.avatar_url":             `""`,
+		"site.cover_url":              `""`,
 		"site.icon_url":               `""`,
 		"site.timezone":               `"Asia/Shanghai"`,
 		"content.page_size":           `20`,
@@ -370,6 +372,17 @@ func TestSetValidatesKnownKeys(t *testing.T) {
 		{"icon wrong scheme", KeySiteIconURL, "javascript:alert(1)", true},
 		{"icon with credentials", KeySiteIconURL, "https://user:pass@example.com/favicon.png", true},
 		{"icon wrong type", KeySiteIconURL, 12, true},
+		// The home cover image is the same kind of value as the avatar and the
+		// icon, so it accepts exactly the same shapes: empty (the page draws no
+		// cover) or an absolute http(s) URL.
+		{"cover empty", KeySiteCoverURL, "", false},
+		{"cover https", KeySiteCoverURL, "https://cdn.example.com/cover.jpg", false},
+		{"cover at upper bound", KeySiteCoverURL, "https://example.com/" + strings.Repeat("a", maxAssetURLRunes-len("https://example.com/")), false},
+		{"cover too long", KeySiteCoverURL, "https://example.com/" + strings.Repeat("a", maxAssetURLRunes), true},
+		{"cover relative", KeySiteCoverURL, "/cover.jpg", true},
+		{"cover wrong scheme", KeySiteCoverURL, "javascript:alert(1)", true},
+		{"cover with credentials", KeySiteCoverURL, "https://user:pass@example.com/cover.jpg", true},
+		{"cover wrong type", KeySiteCoverURL, 12, true},
 		{"timezone utc", KeySiteTimezone, "UTC", false},
 		{"timezone shanghai", KeySiteTimezone, "Asia/Shanghai", false},
 		{"timezone empty", KeySiteTimezone, "", true},

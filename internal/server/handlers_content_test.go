@@ -695,6 +695,104 @@ func TestHomePageEmptyStateAndFilters(t *testing.T) {
 	}
 }
 
+// The home page opens with the author's block and the content-type row. The
+// block is the site's front door - cover image, big avatar, the one-line bio -
+// and the row carries a count per view, because a row of links that only
+// repeated the navigation would be saying nothing the sidebar does not.
+func TestHomePageAuthorHeaderAndTypeRow(t *testing.T) {
+	c := newContentFixture(t)
+	assetID := c.insertAssetFixture(t, "2026/09/header.jpg")
+	c.createOK(t, map[string]any{"type": "moment", "status": "published", "body": "动态正文甲"})
+	c.createOK(t, map[string]any{"type": "article", "status": "published", "title": "文章标题乙", "body": "正文"})
+	c.createOK(t, map[string]any{"type": "article", "status": "published", "title": "文章标题丙", "body": "正文"})
+	c.createOK(t, map[string]any{"type": "photo", "status": "published", "asset_ids": []int64{assetID}})
+
+	const (
+		cover  = "https://cdn.example.com/cover.jpg"
+		avatar = "https://cdn.example.com/site-avatar.png"
+	)
+	rec := c.patchSettings(t,
+		`{"site_description":"海边的个人博客","site_avatar_url":"`+avatar+`","site_cover_url":"`+cover+`"}`,
+		c.cookie, c.csrf)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch settings: status = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	home := c.do(t, http.MethodGet, "/", "", nil, nil)
+	if home.Code != http.StatusOK {
+		t.Fatalf("status = %d", home.Code)
+	}
+	body := home.Body.String()
+	for _, want := range []string{
+		`class="author-head has-cover"`,
+		`class="author-cover"`,
+		`src="` + cover + `"`,
+		`<h2 class="author-name">遇事开心</h2>`,
+		`<p class="author-bio">海边的个人博客</p>`,
+		`src="` + avatar + `"`,
+		// The row offers exactly the three filters the feed accepts, each with
+		// its count, and marks the unfiltered view.
+		`class="type-tab on" href="/" aria-current="page"`,
+		`class="type-tab" href="/?type=article"`,
+		`class="type-tab" href="/?type=photo"`,
+		`<span class="type-tab-count">4</span>`,
+		`<span class="type-tab-count">2</span>`,
+		`<span class="type-tab-count">1</span>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the home page is missing %s", want)
+		}
+	}
+	// docs/PRODUCT.md §5.1: moments only ever appear in the unfiltered feed, so
+	// the row must not offer a filter the server answers with a 400.
+	if strings.Contains(body, "type=moment") {
+		t.Error("the type row offers a moment filter")
+	}
+	// Boop has one author and no follow graph (docs/PRODUCT.md §7), so the block
+	// must not grow the empty follow/fan counters a user profile would carry.
+	for _, unwanted := range []string{"关注", "粉丝", "合集"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("the author block invented a %s counter", unwanted)
+		}
+	}
+
+	// A filtered view marks its own entry and leaves "全部" unmarked.
+	article := c.do(t, http.MethodGet, "/?type=article", "", nil, nil)
+	if article.Code != http.StatusOK {
+		t.Fatalf("article view status = %d", article.Code)
+	}
+	articleBody := article.Body.String()
+	if !strings.Contains(articleBody, `class="type-tab on" href="/?type=article" aria-current="page"`) {
+		t.Error("the article view does not mark its own entry")
+	}
+	if strings.Contains(articleBody, `class="type-tab on" href="/"`) {
+		t.Error("the article view still marks 全部")
+	}
+	// The header is the site's identity, not a function of the filter, so it
+	// stays on every view.
+	if !strings.Contains(articleBody, `class="author-head has-cover"`) {
+		t.Error("the filtered view dropped the author header")
+	}
+
+	// A site with no cover image draws no empty band and no cover element.
+	if rec := c.patchSettings(t, `{"site_cover_url":""}`, c.cookie, c.csrf); rec.Code != http.StatusOK {
+		t.Fatalf("clear the cover: status = %d: %s", rec.Code, rec.Body.String())
+	}
+	plain := c.do(t, http.MethodGet, "/", "", nil, nil).Body.String()
+	if !strings.Contains(plain, `class="author-head is-plain"`) {
+		t.Error("the header does not fall back to its unbannered shape")
+	}
+	if strings.Contains(plain, `class="author-cover"`) || strings.Contains(plain, cover) {
+		t.Error("a cleared cover image is still rendered")
+	}
+	if !strings.Contains(plain, `class="type-tabs"`) {
+		// A guard, not a requirement of the feature: the two blocks are
+		// independent, so losing the row here would mean the shared edit broke
+		// both.
+		t.Error("clearing the cover dropped the type row")
+	}
+}
+
 func TestHomePageCursorLink(t *testing.T) {
 	c := newContentFixture(t)
 	for i := 0; i < content.DefaultPageSize+2; i++ {
@@ -723,6 +821,15 @@ func TestHomePageCursorLink(t *testing.T) {
 	}
 	if strings.Contains(second, "条目 21") {
 		t.Errorf("the second page repeated a post from the first page")
+	}
+	// The author block belongs to the top of the feed, so a continuation page
+	// does not repeat it; the type row does, because it is also the way back up
+	// and its counts describe the whole site rather than this page.
+	if strings.Contains(second, `class="author-head`) {
+		t.Error("the cursor page repeated the author header")
+	}
+	if !strings.Contains(second, `class="type-tabs"`) {
+		t.Error("the cursor page is missing the type row")
 	}
 }
 

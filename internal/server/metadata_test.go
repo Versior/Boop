@@ -141,6 +141,54 @@ func TestIndexHeadCarriesCanonicalAndSiteDocument(t *testing.T) {
 	}
 }
 
+// The index preview is a picture of the whole site, so the cover image - the one
+// image drawn to be seen at full width - wins over the avatar. The tab icon
+// stays last: it is drawn for sixteen pixels.
+func TestIndexPreviewPrefersTheCoverImage(t *testing.T) {
+	f := newSettingsFixture(t)
+	owner := f.bootstrapOwner(t, "owner@example.com", "遇事开心")
+	login := f.login(t, owner.Email, authPassword, nil)
+	cookie, csrf := sessionCookie(t, login), decodeData(t, login)["csrf_token"].(string)
+
+	const (
+		cover  = "https://cdn.example.com/cover.jpg"
+		avatar = "https://cdn.example.com/site-avatar.png"
+		icon   = "https://cdn.example.com/favicon.png"
+	)
+	patch := func(body string) {
+		t.Helper()
+		if rec := f.patchSettings(t, body, cookie, csrf); rec.Code != http.StatusOK {
+			t.Fatalf("patch %s: status = %d: %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	ogImage := func() string {
+		t.Helper()
+		for _, line := range strings.Split(head(t, f.do(t, http.MethodGet, "/", "", nil, nil).Body.String()), "\n") {
+			if strings.Contains(line, `property="og:image"`) {
+				return line
+			}
+		}
+		return ""
+	}
+
+	patch(`{"site_avatar_url":"` + avatar + `","site_icon_url":"` + icon + `"}`)
+	if got := ogImage(); !strings.Contains(got, avatar) {
+		t.Errorf("og:image = %q, want the avatar while no cover is configured", got)
+	}
+	if got := ogImage(); strings.Contains(got, icon) {
+		t.Errorf("og:image = %q, want the avatar ahead of the tab icon", got)
+	}
+
+	patch(`{"site_cover_url":"` + cover + `"}`)
+	got := ogImage()
+	if !strings.Contains(got, cover) {
+		t.Errorf("og:image = %q, want the cover image once it is configured", got)
+	}
+	if strings.Contains(got, avatar) {
+		t.Errorf("og:image = %q, still the avatar", got)
+	}
+}
+
 func TestCanonicalDropsTheQueryString(t *testing.T) {
 	f := newAuthFixture(t)
 	f.insertPost(t, "hello", content.TypeArticle, content.StatusPublished, "你好", "正文", "", "2026-01-01T00:00:00Z")
