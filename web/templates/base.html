@@ -67,6 +67,11 @@
     <path d="m9.4 7.6 4.4 4.4-4.4 4.4"/>
     <path d="M15.4 3.6h2.8A2.4 2.4 0 0 1 20.6 6v12a2.4 2.4 0 0 1-2.4 2.4h-2.8"/>
   </symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24">
+    <path d="M20.6 12H10.2"/>
+    <path d="m14.6 7.6-4.4 4.4 4.4 4.4"/>
+    <path d="M8.6 3.6H5.8A2.4 2.4 0 0 0 3.4 6v12A2.4 2.4 0 0 0 5.8 20.4h2.8"/>
+  </symbol>
   <symbol id="i-moon" viewBox="0 0 24 24">
     <path d="M20.3 12.7A8.3 8.3 0 1 1 11.3 3.7a6.6 6.6 0 0 0 9 9z"/>
   </symbol>
@@ -143,12 +148,19 @@
         </button>
       </nav>
     </div>
-    {{if .Owner}}
-    <!-- 后台入口固定在图标条底部，和主导航分开；游客与读者拿不到只能得到 403 的链接。 -->
+    {{if .SignedIn}}
+    <!-- 底部一组与主导航分开，由 .rail-left 的 space-between 顶到底部。站长后台只有站长
+         看得到（读者拿到的只是一条必然 403 的链接），退出登录是每个会话都要有的：没有它，
+         已登录的人在这套界面里没有任何办法结束会话。 -->
     <div class="rail-foot">
+      {{if .Owner}}
       <a class="nav-item" href="/admin" title="站长后台">
         <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-settings"/></svg><span class="label">站长后台</span>
       </a>
+      {{end}}
+      <button class="nav-item" type="button" data-logout title="退出登录">
+        <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-logout"/></svg><span class="label">退出登录</span>
+      </button>
     </div>
     {{end}}
   </aside>
@@ -174,6 +186,13 @@
             <svg class="ic ic-nav ic-moon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-moon"/></svg>
             <svg class="ic ic-nav ic-sun" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sun"/></svg>
           </button>
+          {{if .SignedIn}}
+          <!-- 左栏在 700px 以下整个隐藏，所以手机上的退出登录只能放在这条顶栏里；
+               两个入口是同一段行为的两处落点，由 app.js 的 [data-logout] 一起接管。 -->
+          <button class="icon-btn" type="button" data-logout aria-label="退出登录" title="退出登录">
+            <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-logout"/></svg>
+          </button>
+          {{end}}
         </div>
       </div>
     </header>

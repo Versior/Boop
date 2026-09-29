@@ -201,6 +201,12 @@ type pageView struct {
 	// Owner is true for the signed-in owner, so the shell can offer the
 	// moderation entry without every page computing it.
 	Owner bool
+	// SignedIn is true for any signed-in account, owner or reader. The shell
+	// needs it for the entries every session gets - signing out - while Owner
+	// stays the narrower flag for the owner-only ones. Deriving it from
+	// CSRFToken would have worked by accident: the token is only issued to a
+	// session, but it is a credential, not a statement about who is asking.
+	SignedIn bool
 	// SiteName, SiteDescription, SiteAvatarURL and SiteIconURL are the configured
 	// brand of the site. Every page renders them (title suffix, brand, aria
 	// labels, search placeholder, meta description, favicon), so no user-visible
@@ -247,6 +253,7 @@ func (s *server) shellViewWithSettings(r *http.Request, filter string, values se
 	}
 	if state, ok := authStateFrom(r.Context()); ok && state.authenticated {
 		view.CSRFToken = state.session.CSRFToken
+		view.SignedIn = true
 		view.Owner = state.user.IsOwner()
 	}
 	return view

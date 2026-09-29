@@ -766,6 +766,38 @@
     wireModeration();
   }
 
+  /* 退出登录。桌面左栏与移动端顶栏各有一个入口，视口只会让其中一个可见，但两个都在
+     同一个文档里：先禁用全部按钮再发请求，同一次点击不会变成两次登出。
+     这一步没有无脚本回退：CSRF 令牌只走 X-CSRF-Token 请求头（见 docs/API.md），
+     普通表单提交拿不到它，服务端会按设计拒绝。成功后整页跳回首页，让服务端重新渲染
+     游客外壳，页面上那枚 csrf-token meta 也就随文档一起消失。 */
+  function wireLogout() {
+    var buttons = Array.prototype.slice.call(document.querySelectorAll('[data-logout]'));
+    if (!buttons.length) { return; }
+
+    var leaving = false;
+
+    function setBusy(value) {
+      buttons.forEach(function (button) { button.disabled = value; });
+    }
+
+    buttons.forEach(function (button) {
+      button.addEventListener('click', function () {
+        if (leaving) { return; }
+        leaving = true;
+        setBusy(true);
+
+        apiRequest('/api/v1/auth/logout', 'POST').then(function () {
+          window.location.assign('/');
+        }).catch(function (error) {
+          leaving = false;
+          setBusy(false);
+          showToast(error.message || '退出失败，请稍后重试。');
+        });
+      });
+    });
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
     Array.prototype.forEach.call(document.querySelectorAll('[data-theme-toggle]'), function (btn) {
       btn.addEventListener('click', function () {
@@ -777,5 +809,6 @@
     wireComposer();
     wireSettingsForm();
     wireSocial();
+    wireLogout();
   });
 })();

@@ -640,6 +640,10 @@ func TestConfiguredAvatarRendersOnEveryContentSurface(t *testing.T) {
 // TestLeftRailAdminEntryIsOwnerOnly pins the permanent way into the admin pages:
 // the rail owns a gear at its foot, so the owner does not have to remember a URL.
 // A guest or a reader must not be handed a link that could only answer 403.
+//
+// The assertion is about the link, not about the rail foot: the foot is also
+// where every signed-in visitor gets the sign-out control, so it exists for a
+// reader too. What must stay owner-only is the way into /admin.
 func TestLeftRailAdminEntryIsOwnerOnly(t *testing.T) {
 	f := newSettingsFixture(t)
 	owner := f.bootstrapOwner(t, "owner@example.com", "遇事开心")
@@ -678,8 +682,8 @@ func TestLeftRailAdminEntryIsOwnerOnly(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200", rec.Code)
 			}
-			if strings.Contains(rec.Body.String(), marker) {
-				t.Error("the rail foot is rendered for a visitor who cannot use it")
+			if strings.Contains(rec.Body.String(), `href="/admin"`) {
+				t.Errorf("%s is offered the rail's admin link", tt.name)
 			}
 		})
 	}

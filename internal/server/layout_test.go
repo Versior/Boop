@@ -27,6 +27,24 @@ func navBlock(t *testing.T, body, class string) string {
 	return rest[:end]
 }
 
+// markupBlock returns the markup between two markers. The shell is small and
+// hand-written, so slicing between a start marker and the end of the region is
+// enough to ask what one part of it contains - and unlike a whole-document
+// search it cannot be satisfied by an entry that lives somewhere else.
+func markupBlock(t *testing.T, body, from, to string) string {
+	t.Helper()
+	start := strings.Index(body, from)
+	if start < 0 {
+		t.Fatalf("the document has no %q", from)
+	}
+	rest := body[start:]
+	end := strings.Index(rest, to)
+	if end < 0 {
+		t.Fatalf("%q is never closed by %q", from, to)
+	}
+	return rest[:end]
+}
+
 func TestBottomNavOffersSearch(t *testing.T) {
 	f := newAuthFixture(t)
 
@@ -138,5 +156,78 @@ func TestDetailPhotoIsNotCropped(t *testing.T) {
 	}
 	if strings.Contains(feed, "post-detail") {
 		t.Error("the feed carries the detail scope and would lose its thumbnail ratio")
+	}
+}
+
+// TestSignedInPagesOfferSignOut pins the way out of a session. The endpoint
+// (POST /api/v1/auth/logout) and the session store were always complete: the
+// shell simply rendered no control on any page that called them, so a visitor
+// who signed in had no way to sign out from the interface.
+//
+// Three identities are asserted because the two entries in the left rail's
+// footer do not share a condition: Owner adds the moderation link, SignedIn
+// adds the sign-out control, and a guest gets neither. Two entries are the
+// target, not one: the left rail is display:none below 700px and the top bar is
+// display:none above it, so a control that exists in only one of them is
+// unreachable at some width.
+func TestSignedInPagesOfferSignOut(t *testing.T) {
+	c := newContentFixture(t)
+	reader, _ := c.readerFixture(t)
+	created := c.createOK(t, map[string]any{
+		"type": "moment", "status": "published", "body": "退出登录回归用例",
+	})
+	slug := created["slug"].(string)
+
+	cases := []struct {
+		name     string
+		target   string
+		cookie   *http.Cookie
+		signedIn bool
+		owner    bool
+	}{
+		{"guest on the feed", "/", nil, false, false},
+		{"guest on a detail page", "/p/" + slug, nil, false, false},
+		{"reader on the feed", "/", reader, true, false},
+		{"reader on bookmarks", "/bookmarks", reader, true, false},
+		{"owner on the feed", "/", c.cookie, true, true},
+		{"owner on bookmarks", "/bookmarks", c.cookie, true, true},
+		{"owner on search", "/search?q=退出", c.cookie, true, true},
+		{"owner on admin comments", "/admin/comments", c.cookie, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := c.do(t, http.MethodGet, tc.target, "", nil, tc.cookie)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET %s: status = %d, want 200", tc.target, rec.Code)
+			}
+			body := rec.Body.String()
+			rail := markupBlock(t, body, `class="rail-left"`, "</aside>")
+			bar := markupBlock(t, body, `class="tb-actions"`, "</header>")
+
+			wantEach := 0
+			if tc.signedIn {
+				wantEach = 1
+			}
+			if got := strings.Count(body, "data-logout"); got != 2*wantEach {
+				t.Errorf("GET %s renders %d sign-out controls, want %d", tc.target, got, 2*wantEach)
+			}
+			if got := strings.Count(rail, "data-logout"); got != wantEach {
+				t.Errorf("GET %s renders %d sign-out controls in the left rail, want %d:\n%s",
+					tc.target, got, wantEach, rail)
+			}
+			if got := strings.Count(bar, "data-logout"); got != wantEach {
+				t.Errorf("GET %s renders %d sign-out controls in the mobile top bar, want %d:\n%s",
+					tc.target, got, wantEach, bar)
+			}
+			if got := strings.Contains(rail, `href="/admin"`); got != tc.owner {
+				t.Errorf("GET %s offers the admin entry = %v, want %v", tc.target, got, tc.owner)
+			}
+			// Signing out is a write, so the control must be a button that the
+			// script turns into a POST. A link would end the session on a GET,
+			// which any third-party page can trigger with an image tag.
+			if strings.Contains(body, `href="/api/v1/auth/logout"`) {
+				t.Error("the sign-out control is a plain link, so a GET would end the session")
+			}
+		})
 	}
 }
