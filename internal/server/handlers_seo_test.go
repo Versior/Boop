@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/xml"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -250,5 +251,50 @@ func TestSEOMethodFallbackIsNotReachableWithoutOrigin(t *testing.T) {
 	rec := f.do(t, http.MethodPost, "/robots.txt", "", nil, nil)
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("status = %d, want 403 from the origin guard", rec.Code)
+	}
+}
+
+// TestSitemapEncodesAPostSlugAsOnePathSegment pins the addresses a crawler is
+// handed. Slugs are stored as raw text and Slugify keeps CJK, so a Chinese
+// headline becomes a Chinese path segment. encoding/xml escapes the five XML
+// entities and nothing else, so the sitemap used to publish /p/中文标题
+// verbatim: well-formed XML carrying an address the sitemap protocol does not
+// permit, since <loc> has to be an escaped URI.
+//
+// The encoded form is asserted to equal the detail page's own canonical. A
+// crawler that follows the loc then lands on a page declaring exactly that
+// address, instead of two spellings of the same page.
+//
+// A plain ASCII slug is asserted to come through untouched. Encoding a slug
+// that needs no encoding still yields a working document, but it would change
+// every address a subscriber has already cached.
+func TestSitemapEncodesAPostSlugAsOnePathSegment(t *testing.T) {
+	f := newAuthFixture(t)
+	f.insertPost(t, "中文标题", content.TypeArticle, content.StatusPublished, "中文标题", "正文", "", "2026-01-01T00:00:00Z")
+	f.insertPost(t, "plain-slug", content.TypeArticle, content.StatusPublished, "Plain", "正文", "", "2026-01-02T00:00:00Z")
+
+	body := f.do(t, http.MethodGet, "/sitemap.xml", "", nil, nil).Body.String()
+
+	const encoded = "http://localhost:8080/p/%E4%B8%AD%E6%96%87%E6%A0%87%E9%A2%98"
+	if !strings.Contains(body, "<loc>"+encoded+"</loc>") {
+		t.Errorf("sitemap does not carry the encoded address %q:\n%s", encoded, body)
+	}
+	if strings.Contains(body, "中文标题") {
+		t.Errorf("sitemap still carries a raw slug:\n%s", body)
+	}
+	if !strings.Contains(body, "<loc>http://localhost:8080/p/plain-slug</loc>") {
+		t.Errorf("sitemap rewrote a slug that needed no encoding:\n%s", body)
+	}
+
+	// The document is still valid XML after the change: the ampersands of the
+	// percent escapes are not XML entities.
+	parseSitemap(t, body)
+
+	detail := f.do(t, http.MethodGet, "/p/"+url.PathEscape("中文标题"), "", nil, nil)
+	if detail.Code != http.StatusOK {
+		t.Fatalf("detail of the encoded slug: status = %d", detail.Code)
+	}
+	if !strings.Contains(detail.Body.String(), `<link rel="canonical" href="`+encoded+`">`) {
+		t.Errorf("the detail page's canonical is not the address the sitemap lists:\n%s", detail.Body.String())
 	}
 }

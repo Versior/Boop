@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,31 @@ const (
 	// of a post summarise it the same way.
 	summaryRunes = 300
 )
+
+// postPath is the relative address of a post page, with the slug encoded as a
+// single path segment. Stored slugs are raw text - Slugify keeps CJK - so a
+// Chinese headline becomes a Chinese path segment.
+//
+// The pages need no help from this: html/template already percent-encodes an
+// href, so a view model keeps handing it the raw path and the template's
+// escaping is the layer that owns that context. The outputs that no template
+// escapes do need it, and they are the reason this function exists: the search
+// JSON payload, and the sitemap and the feed, where encoding/xml only escapes
+// the five XML entities and leaves the value otherwise untouched. Those two
+// documents used to publish raw Chinese addresses that the sitemap protocol
+// does not permit and that a reader's GUID could not open.
+//
+// PathEscape rather than a whole-path escape, because a slug is one segment: a
+// slash inside one must not survive as a separator.
+func postPath(slug string) string {
+	return postPagePrefix + url.PathEscape(slug)
+}
+
+// postURL is postPath made absolute against BOOP_BASE_URL, for the documents
+// that are read away from this site.
+func (s *server) postURL(slug string) string {
+	return s.cfg.BaseURL + postPath(slug)
+}
 
 // typeLabels maps a post type to its Chinese chip label.
 var typeLabels = map[string]string{

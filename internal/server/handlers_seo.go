@@ -146,7 +146,7 @@ func (s *server) handleSitemap(w http.ResponseWriter, r *http.Request) {
 	document.URLs = append(document.URLs, sitemapURL{Loc: s.cfg.BaseURL + "/"})
 	for _, post := range posts {
 		document.URLs = append(document.URLs, sitemapURL{
-			Loc:     s.cfg.BaseURL + postPagePrefix + post.Slug,
+			Loc:     s.postURL(post.Slug),
 			LastMod: sitemapLastMod(post.UpdatedAt),
 		})
 	}

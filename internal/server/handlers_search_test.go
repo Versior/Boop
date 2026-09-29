@@ -424,3 +424,41 @@ func TestSearchAPIPaginatesWithoutDuplicates(t *testing.T) {
 		t.Errorf("visited %d results, want 3", len(seen))
 	}
 }
+
+// TestSearchAPIEncodesAPostSlugAsOnePathSegment pins the address the retrieval
+// API hands a client. A stored slug is raw text and Slugify keeps CJK, so a
+// Chinese headline is a Chinese path segment, and this payload is JSON built by
+// hand rather than an href built by html/template - nothing in the encoder
+// escapes a URI. The field is documented as a URL, and a URI may not carry
+// unescaped non-ASCII.
+//
+// The path stays relative, which is what this endpoint has always returned; the
+// sitemap and the feed are the surfaces that need it absolute.
+func TestSearchAPIEncodesAPostSlugAsOnePathSegment(t *testing.T) {
+	f := newAuthFixture(t)
+	f.insertPost(t, "中文标题", content.TypeArticle, content.StatusPublished, "中文标题", "一段待评论的正文", "", "2026-01-01T00:00:00Z")
+
+	rec := f.do(t, http.MethodGet, "/api/v1/search?q="+urlQueryEscape("中文标题"), "", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	payload := decodeEnvelope(t, rec)
+	items, ok := payload["data"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("data = %v, want the one published post: %s", payload["data"], rec.Body.String())
+	}
+	first, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatalf("result is %T, want an object", items[0])
+	}
+
+	const wanted = "/p/%E4%B8%AD%E6%96%87%E6%A0%87%E9%A2%98"
+	if first["url"] != wanted {
+		t.Errorf("url = %v, want %q", first["url"], wanted)
+	}
+	// The slug itself stays raw: it is an identifier a client compares, not an
+	// address, and the two mean different things.
+	if first["slug"] != "中文标题" {
+		t.Errorf("slug = %v, want the stored identifier", first["slug"])
+	}
+}

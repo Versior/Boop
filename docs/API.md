@@ -29,7 +29,7 @@
 - 两条路径共用同一套游标、排序与页大小，`next_cursor` 的语义与翻页行为完全一致：翻页不会重复或漏行。相邻的中文不拆词，整串当一个词查（「今天评论」找的是这个字面串，不会拆成「今天」+「评论」）；要用两个字面串做「与」，在它们之间加空格或标点即可。
 - `q` 超过 100 个字符返回 400 `invalid_query`；`limit` 默认 20、最大 50，非法值返回 400 `invalid_limit`；游标非法返回 400 `invalid_cursor`。
 - 只返回 `status='published'` 且 `deleted_at IS NULL` 的内容，按 `published_at DESC, id DESC` 稳定排序，游标沿用公共信息流的 `<published_at,id>` 格式（不接受评分游标），因此翻页不会重复或漏行；bm25 分数只作为服务端内部字段，不出现在响应里、也不参与排序。
-- 结果字段是未来 AI 检索复用的最小集：`id`、`slug`、`type`、`title`、`excerpt`、`snippet`、`url`、`published_at`、`updated_at`。**不返回**正文、图片、标签、点赞与评论。
+- 结果字段是未来 AI 检索复用的最小集：`id`、`slug`、`type`、`title`、`excerpt`、`snippet`、`url`、`published_at`、`updated_at`。**不返回**正文、图片、标签、点赞与评论。`slug` 是存储的原文标识符（`Slugify` 保留 CJK），`url` 是 `/p/{slug}` 并把 slug 按**单段路径**百分号编码后的地址——字段名说的是地址，地址就必须是转义后的 URI，而这份 JSON 不经过 `html/template`，没有任何一层会替你转义。`/feed.xml` 与 `/sitemap.xml` 用同一条规则（那里是绝对地址）。
 - `snippet` 是**纯文本**片段，取自匹配最佳的那一列（标题、正文或摘要），因此只在标题或摘要命中的结果同样能看到命中词被高亮，而不是一段与命中无关的正文开头；命中词由两个控制字符（U+0002 / U+0003）包裹。FTS 路径用 `snippet(post_search, -1, …)`，子串路径在应用层按**同样的列优先级**取列并插入**同样的标记**，窗口为命中前后共 80 个字符，被截断的一侧以 `…` 收尾，两条路径的输出随后都被同一个 240 字符上限收口。
 - SSR 页面不把片段当 HTML：服务端只按这两个标记把片段切成**纯文本片段数组**，模板静态输出 `<mark>`，每段文本仍由 `html/template` 自动转义。即便存储正文里本来就有 U+0002 / U+0003，最坏结果只是多一对高亮，不可能注入 HTML 或破坏标签结构。
 - `/api/v1/search` 子树永远是 JSON：未知子路径 404 `not_found`，错误方法 405 `method_not_allowed` 且带 `Allow: GET`。
@@ -61,6 +61,7 @@ RSS 规则（`GET /feed.xml`，公开）：
 - 首页条目**不带** `lastmod`：首页只渲染最新一页内容，没有任何单个存储时间戳能描述它何时变化，随便填一个都是过度或不足声明。
 - `/?type=article` 与 `/?type=photo` 这两个筛选视图**不**单独列入：它们是首页的子集，而且从首页一次点击就能到达，列进去只会给爬虫增加与首页高度重复的 URL。
 - 时间戳无法解析时**省略** `lastmod` 元素，而不是输出空元素——空元素会让文档非法。
+- `<loc>` 里的 slug 已按**单段路径**百分号编码（`url.PathEscape`）。slug 存的是原文，`Slugify` 保留 CJK，所以中文标题本来就是中文路径段；而 `encoding/xml` 只转义五个 XML 实体、其余原样输出，因此这里必须自己编码——协议要求 `<loc>` 是转义后的 URI。编码结果与详情页自己的 `<link rel="canonical">` **逐字节相同**（两者都走请求路径的转义形式），爬虫顺着 `<loc>` 抓到的页面声明的正是同一个地址。ASCII slug 不受影响（同一规则：`/p/plain-slug` 保持原样）。`/feed.xml` 的 `<link>` 与 `isPermaLink="true"` 的 `<guid>` 走同一个构造函数。
 - 两个路径的非 GET 请求都被本进程回答为 405 并带 `Allow: GET`；但不带 Origin/Referer 的写请求会先被同源守卫拦成 403 `origin_required`，这与 `/feed.xml` 的处理一致。
 
 ## 静态资源

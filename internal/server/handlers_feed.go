@@ -149,7 +149,7 @@ func (s *server) handleFeed(w http.ResponseWriter, r *http.Request) {
 			writeFailure(w, r, http.StatusInternalServerError, "internal_error", "服务器内部错误")
 			return
 		}
-		link := s.cfg.BaseURL + postPagePrefix + post.Slug
+		link := s.postURL(post.Slug)
 		feed.Channel.Items = append(feed.Channel.Items, rssItem{
 			Title:       rssItemTitle(post),
 			Link:        link,

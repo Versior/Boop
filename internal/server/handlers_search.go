@@ -92,7 +92,7 @@ func (s *server) handleSearchAPI(w http.ResponseWriter, r *http.Request) {
 			Title:       result.Title,
 			Excerpt:     result.Excerpt,
 			Snippet:     result.Snippet,
-			URL:         postPagePrefix + result.Slug,
+			URL:         postPath(result.Slug),
 			PublishedAt: result.PublishedAt,
 			UpdatedAt:   result.UpdatedAt,
 		})

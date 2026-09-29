@@ -327,3 +327,45 @@ func twoDigits(value int) string {
 	digits := []byte{byte('0' + value/10%10), byte('0' + value%10)}
 	return string(digits)
 }
+
+// TestFeedEncodesAPostSlugAsOnePathSegment pins the same rule as the sitemap
+// test, on the element that makes it matter most: guid isPermaLink="true"
+// asserts the value is a URL a reader can open, so a raw Chinese string there
+// is a claim that is simply false.
+//
+// The item link and the GUID are asserted together because they are the same
+// address by construction; a feed whose permalink and GUID disagree would make
+// a reader treat one post as two.
+func TestFeedEncodesAPostSlugAsOnePathSegment(t *testing.T) {
+	f := newAuthFixture(t)
+	f.insertPost(t, "中文标题", content.TypeArticle, content.StatusPublished, "中文标题", "正文", "", "2026-01-01T00:00:00Z")
+	f.insertPost(t, "plain-slug", content.TypeArticle, content.StatusPublished, "Plain", "正文", "", "2026-01-02T00:00:00Z")
+
+	body := f.do(t, http.MethodGet, "/feed.xml", "", nil, nil).Body.String()
+	feed := parseFeed(t, body)
+	if len(feed.Channel.Items) != 2 {
+		t.Fatalf("feed has %d items, want 2:\n%s", len(feed.Channel.Items), body)
+	}
+
+	links := make(map[string]bool, len(feed.Channel.Items))
+	for _, item := range feed.Channel.Items {
+		links[item.Link] = true
+		if item.GUID.Value != item.Link {
+			t.Errorf("item %q: guid = %q but link = %q", item.Title, item.GUID.Value, item.Link)
+		}
+		if item.GUID.IsPermaLink != "true" {
+			t.Errorf("item %q: isPermaLink = %q", item.Title, item.GUID.IsPermaLink)
+		}
+	}
+	for _, want := range []string{
+		"http://localhost:8080/p/%E4%B8%AD%E6%96%87%E6%A0%87%E9%A2%98",
+		"http://localhost:8080/p/plain-slug",
+	} {
+		if !links[want] {
+			t.Errorf("feed has no item linking to %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "/p/中文标题") {
+		t.Errorf("feed still carries a raw slug in an address:\n%s", body)
+	}
+}
