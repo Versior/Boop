@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"boop/internal/secretbox"
 	"boop/internal/settings"
@@ -701,6 +704,125 @@ func TestLeftRailAdminEntryIsOwnerOnly(t *testing.T) {
 	}
 }
 
+// proseFragments returns the sentences a settings page states outside its form
+// controls: the description under the title, every field hint and every
+// warning, split on the two sentence-final marks. Markup is dropped first, so a
+// sentence wrapped in <strong> or <code> still compares equal to the same
+// sentence written plainly.
+func proseFragments(body string) []string {
+	var out []string
+	for _, class := range []string{"page-sub", "settings-hint", "settings-warning"} {
+		rest := body
+		for {
+			start := strings.Index(rest, `class="`+class+`"`)
+			if start < 0 {
+				break
+			}
+			rest = rest[start:]
+			open := strings.Index(rest, ">")
+			closing := strings.Index(rest, "</p>")
+			if open < 0 || closing < open {
+				break
+			}
+			text := html.UnescapeString(tagPattern.ReplaceAllString(rest[open+1:closing], ""))
+			rest = rest[closing+len("</p>"):]
+			for _, sentence := range strings.FieldsFunc(text, func(r rune) bool {
+				return r == '。' || r == '；'
+			}) {
+				sentence = strings.Join(strings.Fields(sentence), " ")
+				if utf8.RuneCountInString(sentence) >= 8 {
+					out = append(out, sentence)
+				}
+			}
+		}
+	}
+	return out
+}
+
+var tagPattern = regexp.MustCompile(`<[^>]*>`)
+
+// TestSettingsPagesSayEachThingOnce pins the shape of the back-end page header.
+//
+// The pages used to say the same thing three or four times over: a module line
+// ("站长后台 · 设置") above the title, the title repeating the category name, a
+// description under it, and then a second copy of that description at the top
+// of the form. The AI page carried "作者状态与写作助手在配置完成后生效" twice,
+// the GitHub page stated the callback rule twice, and the storage page restated
+// its own migration caveat in the header and again as the warning. The owner's
+// report was that the page was clutter - and prose is the cheapest thing to add
+// and the hardest thing to notice, so this reads the rendered text instead of
+// trusting the next author to remember.
+func TestSettingsPagesSayEachThingOnce(t *testing.T) {
+	f := newSettingsFixture(t)
+	owner := f.bootstrapOwner(t, "owner@example.com", "遇事开心")
+	cookie := sessionCookie(t, f.login(t, owner.Email, authPassword, nil))
+
+	for _, section := range adminSettingsSections {
+		body := f.do(t, http.MethodGet, adminSettingsPrefix+section.Key, "", nil, cookie).Body.String()
+
+		// One description per page, and the module does not get a line of its
+		// own: the sidebar and the current tab already say both.
+		if got := strings.Count(body, `class="page-sub"`); got != 1 {
+			t.Errorf("/admin/settings/%s has %d header descriptions, want 1", section.Key, got)
+		}
+		if strings.Contains(body, "page-kicker") {
+			t.Errorf("/admin/settings/%s still puts a module line above the title", section.Key)
+		}
+		if section.Hint == "" {
+			t.Fatalf("/admin/settings/%s has no description at all", section.Key)
+		}
+		if got := strings.Count(body, section.Hint); got != 1 {
+			t.Errorf("/admin/settings/%s states its description %d times, want 1", section.Key, got)
+		}
+
+		seen := make(map[string]int)
+		for _, fragment := range proseFragments(body) {
+			seen[fragment]++
+		}
+		for fragment, count := range seen {
+			if count > 1 {
+				t.Errorf("/admin/settings/%s says %q %d times", section.Key, fragment, count)
+			}
+		}
+	}
+}
+
+// TestASecretCategoryCarriesOneWarning pins the other half of the same cleanup.
+// A category with credential fields must warn about the missing master key, and
+// it may do so exactly once: the page used to render the generic warning, a
+// GitHub-specific sentence inside the section and a third mention next to the
+// password inputs.
+func TestASecretCategoryCarriesOneWarning(t *testing.T) {
+	for _, section := range adminSettingsSections {
+		if section.Secrets && section.Warn == "" {
+			t.Errorf("%s carries credentials but has no warning to show for a missing master key", section.Key)
+		}
+		if !section.Secrets && section.Warn != "" {
+			t.Errorf("%s has no credential fields but carries a master-key warning", section.Key)
+		}
+	}
+
+	// The fixture has no master key, so the warning is what a real site in that
+	// state renders.
+	f := newAuthFixture(t)
+	if err := settings.Seed(t.Context(), f.db); err != nil {
+		t.Fatalf("settings.Seed: %v", err)
+	}
+	owner := f.bootstrapOwner(t, "owner@example.com", "遇事开心")
+	cookie := sessionCookie(t, f.login(t, owner.Email, authPassword, nil))
+
+	for _, section := range adminSettingsSections {
+		body := f.do(t, http.MethodGet, adminSettingsPrefix+section.Key, "", nil, cookie).Body.String()
+		count := strings.Count(body, "未配置 BOOP_MASTER_KEY")
+		switch {
+		case section.Secrets && count != 1:
+			t.Errorf("/admin/settings/%s mentions the missing master key %d times, want 1", section.Key, count)
+		case !section.Secrets && count != 0:
+			t.Errorf("/admin/settings/%s warns about the master key without carrying credentials", section.Key)
+		}
+	}
+}
+
 func TestAdminSettingsPageAndIndex(t *testing.T) {
 	f := newSettingsFixture(t)
 	owner := f.bootstrapOwner(t, "owner@example.com", "遇事开心")
@@ -884,30 +1006,8 @@ func TestAdminSettingsPageAndIndex(t *testing.T) {
 		}
 	})
 
-	t.Run("without a master key the secret categories warn", func(t *testing.T) {
-		plain := newAuthFixture(t)
-		if err := settings.Seed(t.Context(), plain.db); err != nil {
-			t.Fatalf("settings.Seed: %v", err)
-		}
-		plainOwner := plain.bootstrapOwner(t, "owner@example.com", "遇事开心")
-		plainCookie := sessionCookie(t, plain.login(t, plainOwner.Email, authPassword, nil))
-
-		for _, category := range []string{"github", "ai"} {
-			rec := plain.do(t, http.MethodGet, "/admin/settings/"+category, "", nil, plainCookie)
-			if rec.Code != http.StatusOK {
-				t.Fatalf("%s: status = %d, want 200", category, rec.Code)
-			}
-			if !strings.Contains(rec.Body.String(), "未配置 BOOP_MASTER_KEY") {
-				t.Errorf("the %s category does not warn about the missing master key", category)
-			}
-		}
-		// The warning is about credential fields, so a category without one must
-		// not carry it.
-		rec := plain.do(t, http.MethodGet, "/admin/settings/site", "", nil, plainCookie)
-		if strings.Contains(rec.Body.String(), "未配置 BOOP_MASTER_KEY") {
-			t.Error("a category without credential fields warns about the master key")
-		}
-	})
+	// The missing-master-key notice is pinned by TestASecretCategoryCarriesOneWarning,
+	// which covers every category and counts the mentions.
 
 	t.Run("the API subtree stays JSON", func(t *testing.T) {
 		// A guest probe reaches routing: an authenticated unsafe request without a

@@ -325,11 +325,21 @@ func (s *server) handleAdminSettingsIndex(w http.ResponseWriter, r *http.Request
 type adminSettingsSection struct {
 	Key   string
 	Label string
-	// Hint is the line under the page title: what this category decides.
+	// Hint is the one line under the page title: what this category decides.
+	// Each category gets exactly one description and the form below it does not
+	// repeat it. The pages used to say the same thing three times - a module
+	// line above the title, the title, this description, and then a second copy
+	// of it inside the form - which is what it looked like: clutter.
 	Hint string
 	// Secrets is true for a category whose form carries credential fields, which
-	// are the ones a missing BOOP_MASTER_KEY makes unusable.
+	// are the ones a missing BOOP_MASTER_KEY makes unusable. Such a category
+	// must also carry Warn, because the missing master key is the one thing a
+	// reader of that page has to know before typing into a credential field.
 	Secrets bool
+	// Warn is the notice shown in place of the generic one when a category has
+	// something specific to say about the missing master key. Every category
+	// with Secrets set must fill this in.
+	Warn string
 }
 
 const (
@@ -345,30 +355,33 @@ var adminSettingsSections = []adminSettingsSection{
 	{
 		Key:   "site",
 		Label: "站点",
-		Hint:  "站点名称、简介、头像与图标、时区与每页条数。保存后立刻生效；上传目录、单文件大小与允许的图片类型只能通过环境变量配置，不在这一页。",
+		Hint:  "站点名称、简介、头像与图标、时区与每页条数。",
 	},
 	{
 		Key:   "registration",
 		Label: "注册与评论",
-		Hint:  "公开注册与评论的开关。关闭注册后已有账号仍可登录，包括 GitHub 绑定的账号。",
+		Hint:  "公开注册与评论的开关。",
 	},
 	{
 		Key:     "github",
 		Label:   "GitHub 登录",
 		Secrets: true,
-		Hint:    "GitHub OAuth App 的凭据。回调地址必须与 GitHub 上填写的完全一致；密钥只会加密保存，任何页面都不会回显。",
+		Hint:    "GitHub OAuth App 的凭据，只会加密保存，任何页面都不会回显。",
+		Warn:    "未配置 BOOP_MASTER_KEY，凭据无法保存，站点会隐藏 GitHub 登录入口（清除已保存的凭据仍然可用）。",
 	},
 	{
 		Key:     "ai",
 		Label:   "AI",
 		Secrets: true,
-		Hint:    "OpenAI-compatible 服务；作者状态与写作助手在配置完成后生效。密钥只会加密保存，任何页面都不会回显。",
+		Hint:    "OpenAI-compatible 服务，配置完成后作者状态与写作助手生效。API Key 只会加密保存，任何页面都不会回显。",
+		Warn:    "未配置 BOOP_MASTER_KEY，API Key 无法保存（清除已保存的密钥仍然可用）。",
 	},
 	{
 		Key:     "storage",
 		Label:   "存储",
 		Secrets: true,
-		Hint:    "上传图片存放的位置。切换存放位置不会移动已经存在的对象，所以换到对象存储之前必须先把本地目录里的对象按原路径搬进桶里；保存后立刻生效，不需要重启。",
+		Hint:    "上传图片存放的位置，二选一。两个凭据只会加密保存，任何页面都不会回显，日志里也不会出现。",
+		Warn:    "未配置 BOOP_MASTER_KEY，两个凭据无法保存（清除已保存的凭据仍然可用）。",
 	},
 }
 

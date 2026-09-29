@@ -2,10 +2,11 @@
 {{define "content"}}
     <h1 class="sr-only">评论审核</h1>
 
+    <!-- 与设置页同一套页头：标题 + 一句说明，不再在标题之上放一行「站长后台」——
+         左栏已经在说这件事，重复一遍只会把页头垫高。 -->
     <header class="page-head">
-      <p class="page-kicker">站长后台</p>
       <h2 class="page-title">评论审核</h2>
-      <p class="page-sub">批准后评论才会出现在公开页面；拒绝会把它从公开视图移除；删除是软删除，作者的回复同时不再展示。</p>
+      <p class="page-sub">批准后才会公开；拒绝只把评论从公开视图移除；删除是软删除，作者的回复也一并隐藏。</p>
     </header>
 
     <nav class="admin-tabs" aria-label="评论状态">

@@ -613,9 +613,9 @@ button.action:disabled{opacity:.6;cursor:default}
 
 /* ---------- 7.5 页面标题与站长审核 ---------- */
 .page-head{padding:var(--pad);border-bottom:1px solid var(--line)}
-/* 模块归属（例如“站长后台 · 设置”）写在标题之上的一行小字里：页面标题留给这一页自己的
-   名字，模块由小字和左栏同时交代，窄屏侧栏收起时也不会失去上下文。 */
-.page-kicker{margin-bottom:2px;color:var(--muted);font-size:12px;font-weight:600;letter-spacing:.02em}
+/* 页头只有两行：这一页自己的名字，加一句它决定什么。模块归属（后台/前台）不在这上面——
+   左栏、顶栏与底部导航已经在说这件事，而曾经那一行「站长后台 · 设置」把页头垫成三行、
+   每页的说明因此在同一屏里出现两遍。 */
 .page-title{font-size:20px;font-weight:800;letter-spacing:-.01em}
 .page-sub{margin-top:4px;color:var(--muted);font-size:13px;line-height:1.55}
 .admin-tabs{display:flex;gap:4px;padding:10px var(--pad);border-bottom:1px solid var(--line)}

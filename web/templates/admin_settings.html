@@ -2,11 +2,11 @@
 {{define "content"}}
     <h1 class="sr-only">{{.Section.Label}}设置</h1>
 
-    <!-- 标题说的是**这一页**的分类，模块（设置）在头上那行小字与左栏里。四个分类是四张
-         独立的表单（各带自己的保存按钮），不是同一条表单的四种状态，所以每页都要能自己
-         报名；命名方式与「保存{分类}设置」的按钮、浏览器标题一致。 -->
+    <!-- 这一页的名字只说一次。曾经这里还是三行：标题之上有一行「站长后台 · 设置」，
+         标题写「GitHub 登录设置」，下面那句说明又把「GitHub 登录」和回调地址讲了一遍，
+         而表单里还有第二份说明——同一个意思读四遍，读起来就是乱的。
+         模块（设置）由左栏交代，当前页由标签行的高亮交代，所以这里只剩标题与一句说明。 -->
     <header class="page-head">
-      <p class="page-kicker">站长后台 · 设置</p>
       <h2 class="page-title">{{.Section.Label}}设置</h2>
       <p class="page-sub">{{.Section.Hint}}</p>
     </header>
@@ -26,8 +26,10 @@
       {{if eq .Section.Key "ai"}}{{template "settingsAI" .}}{{end}}
       {{if eq .Section.Key "storage"}}{{template "settingsStorage" .}}{{end}}
 
+      <!-- 唯一的常驻警告，而且只说这一页自己的后果：它的位置以前是三条几乎同义的话
+           （一条通用警告、一条 GitHub 专属、一句写在密钥字段旁边的「无法保存」）。 -->
       {{if and .Section.Secrets (not .Settings.MasterKey)}}
-      <p class="settings-warning" role="alert">未配置 BOOP_MASTER_KEY：密钥字段无法保存（清除已保存的密钥仍可用）。</p>
+      <p class="settings-warning" role="alert">{{.Section.Warn}}</p>
       {{end}}
       <p class="auth-error" role="alert" data-settings-error hidden></p>
       <button class="auth-submit" type="submit" data-settings-submit>保存{{.Section.Label}}设置</button>
@@ -35,7 +37,10 @@
     </form>
 {{end}}
 
-<!-- ========== 共享模板：设置的四个分类（各一页，互不重复字段） ========== -->
+<!-- ========== 五个分类各自的模板（各一页，互不重复字段） ==========
+     说明文字的规矩：每一句只出现在它唯一需要出现的地方。页头那句说这一页决定什么，
+     表单里只说「读者看着字段猜不到、且不写就会被拒」的事（回调地址、读取地址、前缀这类的
+     用途与取值）。「保存后立刻生效」这种对每一页都成立的话不再逐页重复。 -->
 
 {{define "settingsSite"}}
       <section class="settings-section">
@@ -51,17 +56,17 @@
           <span>站点头像 URL</span>
           <input name="site_avatar_url" type="url" maxlength="2048" value="{{.Settings.SiteAvatarURL}}" placeholder="https://example.com/avatar.png">
         </label>
-        <p class="settings-hint">留空则使用站长账号头像，再为空则使用内置图标；只接受 http/https 绝对地址，不能带账号密码。</p>
+        <p class="settings-hint">留空用站长账号头像，再为空用内置图标；只接受不带凭据的 http/https 绝对地址。</p>
         <label class="auth-field">
           <span>站点图标 URL</span>
           <input name="site_icon_url" type="url" maxlength="2048" value="{{.Settings.SiteIconURL}}" placeholder="https://example.com/favicon.png">
         </label>
-        <p class="settings-hint">浏览器标签页图标，与头像分开配置。留空则使用上面的站点头像，再为空则使用内置图标；只接受 http/https 绝对地址，不能带账号密码。</p>
+        <p class="settings-hint">浏览器标签页图标。留空则与上面的头像一致。</p>
         <label class="auth-field">
           <span>时区</span>
           <input name="site_timezone" type="text" required maxlength="64" value="{{.Settings.SiteTimezone}}">
         </label>
-        <p class="settings-hint">时区用 IANA 名称，例如 <code>Asia/Shanghai</code> 或 <code>UTC</code>，影响信息流的时间显示。</p>
+        <p class="settings-hint">IANA 名称，例如 <code>Asia/Shanghai</code>，影响信息流的时间显示。</p>
         <label class="auth-field">
           <span>每页条数</span>
           <input name="page_size" type="number" min="1" max="50" required value="{{.Settings.PageSize}}">
@@ -88,7 +93,10 @@
 
 {{define "settingsGithub"}}
       <section class="settings-section">
-        <p class="settings-hint">在 GitHub OAuth App 里把回调地址填成 <code>{{.BaseURL}}/auth/github/callback</code>。<strong>未配置 BOOP_MASTER_KEY 时站点会隐藏 GitHub 登录入口</strong>，因为凭据无法保存。</p>
+        <!-- 回调地址只能有一个，而且要能与粘贴进 GitHub 的那份逐字对照，所以写成一行代码。
+             这一页不再解释「凭据是什么」「未配置 master key 会怎样」——那两句分别在页头
+             与表单末尾的警告里，各一次。 -->
+        <p class="settings-hint">把 GitHub OAuth App 的 Authorization callback URL 填成 <code>{{.BaseURL}}/auth/github/callback</code>。</p>
         <label class="auth-field">
           <span>Client ID</span>
           <input name="github_client_id" type="password" autocomplete="off" maxlength="512"
@@ -112,7 +120,7 @@
 
 {{define "settingsAI"}}
       <section class="settings-section">
-        <p class="settings-hint">OpenAI-compatible 服务：Base URL 例如 <code>https://api.openai.com/v1</code>。作者状态与写作助手在配置完成后生效。</p>
+        <p class="settings-hint">Base URL 例如 <code>https://api.openai.com/v1</code>，必须带版本路径。</p>
         <label class="settings-switch">
           <input name="ai_enabled" type="checkbox"{{if .Settings.AIEnabled}} checked{{end}}>
           <span>启用 AI 功能</span>
@@ -129,11 +137,11 @@
           <span>嵌入模型</span>
           <input name="ai_embedding_model" type="text" maxlength="200" value="{{.Settings.AIEmbeddingModel}}">
         </label>
+        <!-- 这个字段的单位以前只写在下面那行提示里，而标题写的是「天数」，两者不一致。 -->
         <label class="auth-field">
-          <span>作者状态缓存天数</span>
+          <span>作者状态缓存（小时）</span>
           <input name="ai_author_status_ttl_hours" type="number" min="1" max="2160" value="{{.Settings.AIAuthorStatusTTLHours}}">
         </label>
-        <p class="settings-hint">缓存以小时计，默认 168 小时（7 天）。</p>
         <label class="auth-field">
           <span>API Key</span>
           <input name="ai_api_key" type="password" autocomplete="off" maxlength="512"
@@ -148,18 +156,19 @@
 
 {{define "settingsStorage"}}
       <section class="settings-section">
+        <!-- 这一行是事实，不是解释：它报的是进程此刻真正在用的位置，而不是存下来的值。 -->
         <p class="settings-hint">
           当前生效：{{if eq .Settings.StorageEffectiveMode "local"}}本地目录 <code>{{.DataDir}}/uploads</code>{{else}}桶 <code>{{.Settings.StorageEffectiveBucket}}</code>，浏览器读自 <code>{{.Settings.StorageEffectivePublicURL}}</code>{{end}}
         </p>
         {{if .Settings.StorageEnvironment}}
-        <p class="settings-hint">这一页还没有保存过，上面的值来自环境变量 <code>BOOP_R2_*</code>；保存一次之后就以这一页为准，环境变量不再生效。</p>
+        <p class="settings-hint">这一页还没有保存过，上面的值来自环境变量 <code>BOOP_R2_*</code>；保存一次之后就以这一页为准。</p>
         {{end}}
 
         <!-- 切换存放位置不会移动任何对象，而 assets 表里没有「这个对象在哪儿」这一列：
-             地址一律由当前配置生成。所以搬对象必须在切换之前做完，这条警告出现在这一页
-             的每一次渲染里，而不是等到保存失败才说。 -->
+             地址一律由当前配置生成。所以搬对象必须在切换之前做完。这是本页唯一需要读者
+             先知道再动手的事，因此它占掉本页那一条常驻警告；页头的说明不再重复它。 -->
         <p class="settings-warning" role="alert">
-          切换存放位置<strong>不会移动已经存在的对象</strong>，地址一律按当前配置生成。换成对象存储之前，必须先把 <code>uploads/</code> 下的文件按原路径同步进桶里（对象数应与 <code>assets</code> 表的行数一致），否则已有图片会全部失效；换回本地目录同理。两种位置只能有一个生效。
+          切换存放位置<strong>不会移动已经存在的对象</strong>，地址一律按当前配置生成。换位置之前必须先把 <code>uploads/</code> 下的文件按原路径搬进桶里（对象数应与 <code>assets</code> 表的行数一致），否则已有图片会全部失效；换回本地目录同理。
         </p>
 
         <label class="auth-field">
@@ -169,13 +178,12 @@
             <option value="object"{{if eq .Settings.StorageMode "object"}} selected{{end}}>对象存储（S3 兼容：R2 / MinIO / S3）</option>
           </select>
         </label>
-        <p class="settings-hint">下面五项与两个凭据只在选择「对象存储」时必填；留在本地目录时可以先填好，日后切换不必重输。</p>
 
         <label class="auth-field">
           <span>Endpoint</span>
           <input name="storage_endpoint" type="url" maxlength="255" value="{{.Settings.StorageEndpoint}}" placeholder="https://&lt;account-id&gt;.r2.cloudflarestorage.com">
         </label>
-        <p class="settings-hint">S3 签名 API 地址。它<strong>不是</strong>公开读取面，浏览器不会访问它。</p>
+        <p class="settings-hint">签名 API 地址，<strong>不是</strong>给浏览器读的那个地址。</p>
         <label class="auth-field">
           <span>桶名 Bucket</span>
           <input name="storage_bucket" type="text" maxlength="255" value="{{.Settings.StorageBucket}}" placeholder="boop-uploads">
@@ -184,17 +192,16 @@
           <span>读取地址 Public URL</span>
           <input name="storage_public_url" type="url" maxlength="2048" value="{{.Settings.StoragePublicURL}}" placeholder="https://uploads.example.com">
         </label>
-        <p class="settings-hint">桶的公开读取地址：R2 自定义域名（推荐）或桶的 <code>r2.dev</code> 地址。图片地址由它生成，读者直接从该域名取图，不经过本站进程。</p>
+        <p class="settings-hint">图片地址由它生成，读者直接从该域名取图，不占用本站带宽。</p>
         <label class="auth-field">
           <span>区域 Region</span>
           <input name="storage_region" type="text" maxlength="255" value="{{.Settings.StorageRegion}}" placeholder="auto">
         </label>
-        <p class="settings-hint">R2 用 <code>auto</code> 签名，留空即用默认值。</p>
         <label class="auth-field">
           <span>键前缀 Prefix</span>
           <input name="storage_prefix" type="text" maxlength="255" value="{{.Settings.StoragePrefix}}" placeholder="uploads">
         </label>
-        <p class="settings-hint">对象名在桶里的公共前缀，例如 <code>uploads/</code> 或 <code>blog/uploads</code>，可留空。切换前缀会让已有对象失联，和切换存放位置一样需要先搬。</p>
+        <p class="settings-hint">对象名在桶里的公共前缀，可留空。</p>
 
         <label class="auth-field">
           <span>Access Key ID</span>
@@ -214,6 +221,6 @@
           <input type="checkbox" data-secret-clear="storage.secret_access_key">
           <span>清除已保存的 Secret Access Key</span>
         </label>
-        <p class="settings-hint">在 Cloudflare 控制台创建 <strong>R2 API Token</strong>（不要用全局 API Key），权限只需要 Object Read &amp; Write 并限定到这一个桶。两个凭据只会加密保存，任何页面都不会回显，启动日志里也不会出现。</p>
+        <p class="settings-hint">在 Cloudflare 控制台创建 <strong>R2 API Token</strong>（不要用全局 API Key），权限只需 Object Read &amp; Write 并限定到这一个桶。</p>
       </section>
 {{end}}
