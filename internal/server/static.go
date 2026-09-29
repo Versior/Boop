@@ -136,13 +136,24 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	header.Set("Vary", "Accept-Encoding")
 
 	body := asset.body
-	if len(asset.gzipped) > 0 && acceptsGzip(r.Header.Get("Accept-Encoding")) {
+	// A ranged request is always answered with the identity representation. A
+	// byte range addresses the selected representation, so slicing the gzip
+	// stream would hand the client a body it cannot inflate, and compressing
+	// after slicing is not possible here because the range is only known to
+	// ServeContent. Accept-Encoding is a preference rather than a requirement,
+	// so declining the coding for this one request is the safe answer.
+	if len(asset.gzipped) > 0 && r.Header.Get("Range") == "" && acceptsGzip(r.Header.Get("Accept-Encoding")) {
 		body = asset.gzipped
 		header.Set("Content-Encoding", "gzip")
 		header.Set("Etag", asset.gzipETag)
 	} else {
 		header.Set("Etag", asset.etag)
 	}
+
+	// ServeContent states the length itself only for an unencoded response, and
+	// it overwrites this value when it slices a range, so setting it here only
+	// affects the compressed case - which would otherwise go out chunked.
+	header.Set("Content-Length", strconv.Itoa(len(body)))
 
 	// ServeContent answers If-None-Match and Range against the Etag just set.
 	// The modification time is the zero value because embed.FS has none, so no

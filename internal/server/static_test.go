@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -212,6 +213,44 @@ func TestAcceptsGzipNegotiation(t *testing.T) {
 				t.Errorf("acceptsGzip(%q) = %v, want %v", tt.header, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestStaticGzipStatesItsOwnLength(t *testing.T) {
+	srv := testServer(t, discardLogger())
+
+	rec := staticRequest(t, srv, "/static/app.css", map[string]string{"Accept-Encoding": "gzip"})
+	// Go's ServeContent refuses to state a length for an encoded response, so
+	// without the explicit header this goes out chunked. Compressed bytes are
+	// counted in compressed bytes, which is what the header has to say.
+	if got := rec.Header().Get("Content-Length"); got != strconv.Itoa(rec.Body.Len()) {
+		t.Errorf("Content-Length = %q, body is %d bytes", got, rec.Body.Len())
+	}
+}
+
+func TestStaticRangesFallBackToTheIdentityRepresentation(t *testing.T) {
+	srv := testServer(t, discardLogger())
+	full := staticRequest(t, srv, "/static/app.css", nil).Body.Bytes()
+
+	// A byte range addresses the selected representation, so answering one with
+	// a slice of the gzip stream would be a body no client can inflate. The
+	// coding is dropped instead, and the range is served over the raw bytes.
+	rec := staticRequest(t, srv, "/static/app.css", map[string]string{
+		"Accept-Encoding": "gzip",
+		"Range":           "bytes=0-9",
+	})
+
+	if rec.Code != http.StatusPartialContent {
+		t.Fatalf("status = %d, want 206: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Encoding"); got != "" {
+		t.Errorf("Content-Encoding = %q, want the identity representation", got)
+	}
+	if got := rec.Body.Bytes(); !bytes.Equal(got, full[:10]) {
+		t.Errorf("range body = %q, want the first ten raw bytes %q", got, full[:10])
+	}
+	if got := rec.Header().Get("Content-Range"); got != "bytes 0-9/"+strconv.Itoa(len(full)) {
+		t.Errorf("Content-Range = %q, want bytes 0-9/%d", got, len(full))
 	}
 }
 
