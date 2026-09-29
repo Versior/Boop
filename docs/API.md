@@ -48,7 +48,7 @@ RSS 规则（`GET /feed.xml`，公开）：
 | GET | `/auth/github/start` | 可选 return_to | 保存一次性 state 后跳转 GitHub |
 | GET | `/auth/github/callback` | code,state | 登录/绑定后回到同源白名单路径 |
 
-密码 10–72 字节；邮箱最大 254 字符；登录与注册按 IP 和邮箱限速。所有认证失败使用相同外部错误信息。认证接口的 JSON 请求体上限为 64KiB，与 `BOOP_MAX_UPLOAD_MB` 上传预算无关，超限返回 413 `payload_too_large`。
+密码 10–72 字节，**该长度规则只在创建密码时生效**（注册、站长初始化、改密）；登录只校验已存密码，不套用长度规则，因此早于该规则创建的账号仍能登录，也不会在请求发出前就被浏览器拦掉。邮箱最大 254 字符；登录与注册按 IP 和邮箱限速。所有认证失败使用相同外部错误信息。认证接口的 JSON 请求体上限为 64KiB，与 `BOOP_MAX_UPLOAD_MB` 上传预算无关，超限返回 413 `payload_too_large`。
 
 GitHub 登录规则：
 

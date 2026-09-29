@@ -16,6 +16,8 @@ import (
 	"boop/internal/config"
 	"boop/internal/settings"
 	"boop/internal/store"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -850,9 +852,16 @@ func TestAuthPagesRenderForms(t *testing.T) {
 	f := newAuthFixture(t)
 	f.bootstrapOwner(t, "owner@example.com", "站长")
 
-	for _, page := range []struct{ path, form, fields string }{
-		{"/login", `action="/api/v1/auth/login"`, "password"},
-		{"/register", `action="/api/v1/auth/register"`, "display_name"},
+	for _, page := range []struct {
+		path, form, fields string
+		// createsPassword tells whether this page chooses a new password. Only
+		// that page may carry the length rule: sign-in verifies a password that
+		// is already stored, so a minlength there would refuse a valid account
+		// in the browser, before the request is ever sent.
+		createsPassword bool
+	}{
+		{"/login", `action="/api/v1/auth/login"`, "password", false},
+		{"/register", `action="/api/v1/auth/register"`, "display_name", true},
 	} {
 		t.Run(page.path, func(t *testing.T) {
 			rec := f.do(t, http.MethodGet, page.path, "", nil, nil)
@@ -878,7 +887,34 @@ func TestAuthPagesRenderForms(t *testing.T) {
 			if strings.Contains(body, `aria-current="page"`) {
 				t.Error("an auth page marked a navigation item as current")
 			}
+			if got := strings.Contains(body, "minlength="); got != page.createsPassword {
+				t.Errorf("page constrains the password length = %v, want %v", got, page.createsPassword)
+			}
 		})
+	}
+}
+
+// TestLoginAcceptsPasswordShorterThanTheCreationRule pins the split between
+// "choose a password" and "prove you know one": the 10-byte minimum is a rule
+// for creating a password, while sign-in must verify whatever is stored. An
+// account whose password predates the rule therefore still signs in instead of
+// being answered with a validation error.
+func TestLoginAcceptsPasswordShorterThanTheCreationRule(t *testing.T) {
+	f := newAuthFixture(t)
+	f.bootstrapOwner(t, "owner@example.com", "站长")
+
+	hash, err := bcrypt.GenerateFromPassword([]byte("old-one"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("bcrypt.GenerateFromPassword: %v", err)
+	}
+	if _, err := f.db.ExecContext(context.Background(),
+		`UPDATE users SET password_hash = ? WHERE email = ?`, string(hash), "owner@example.com"); err != nil {
+		t.Fatalf("store the legacy hash: %v", err)
+	}
+
+	rec := f.login(t, "owner@example.com", "old-one", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: a stored password must be verified, not re-validated", rec.Code)
 	}
 }
 
