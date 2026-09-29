@@ -1,0 +1,22 @@
+-- Boop migration 004: index the reactions count path.
+--
+-- Every post read resolves its like count with
+--   SELECT COUNT(*) FROM likes WHERE post_id = ?
+-- (internal/content/posts.go postColumns). The likes table is keyed by
+-- (user_id, post_id), so post_id has no leading index and that count is a full
+-- scan of likes. A feed page resolves the count once per card.
+--
+-- store.Open caps the pool at one connection and sets _txlock=immediate, so
+-- those scans are not spread across connections: on a full page they run one
+-- after another on the single connection everything else is waiting for. The
+-- cost therefore grows linearly with the number of likes, which is exactly the
+-- kind of regression that stays invisible until a site has been live for a
+-- while. This index turns each count into a lookup.
+--
+-- The reverse direction (user_id) is already covered by the primary key, so
+-- only post_id is indexed here. Migration 001 is released and stays untouched.
+--
+-- bookmarks is intentionally not indexed: nothing counts bookmarks per post,
+-- and the only bookmark read is by user (idx_bookmarks_user).
+
+CREATE INDEX idx_likes_post ON likes(post_id);

@@ -98,6 +98,7 @@ func TestMigrateCreatesDocumentedSchema(t *testing.T) {
 		"idx_sessions_expires", "idx_posts_feed", "idx_posts_type_feed",
 		"idx_post_assets_order", "idx_comments_post", "idx_comments_queue", "idx_bookmarks_user",
 		"idx_assets_owner_hash",
+		"idx_likes_post",
 	}
 	for _, name := range indexes {
 		var count int
@@ -120,8 +121,8 @@ func TestMigrateCreatesDocumentedSchema(t *testing.T) {
 		}
 	}
 
-	if got := LatestVersion(); got != 3 {
-		t.Errorf("LatestVersion() = %d, want 3", got)
+	if got := LatestVersion(); got != 4 {
+		t.Errorf("LatestVersion() = %d, want 4", got)
 	}
 	version, err := CurrentVersion(context.Background(), db)
 	if err != nil {
@@ -463,4 +464,66 @@ func TestReadyReflectsMigrationState(t *testing.T) {
 	if err := Ready(ctx, nil); err == nil {
 		t.Error("Ready(nil) succeeded, want an error")
 	}
+}
+
+// TestLikesCountIsIndexed pins the query plan of the reaction count that every
+// feed and detail read resolves per post (see postColumns in internal/content).
+// The pool is capped at one connection, so a plan that scans likes is not a
+// local slowdown: it holds the only connection while everything else waits.
+// EXPLAIN is the only way to catch the regression early, because the results of
+// a scan and a lookup are identical — only the cost differs, and the cost only
+// becomes visible once a site has accumulated likes.
+func TestLikesCountIsIndexed(t *testing.T) {
+	db := migratedDB(t)
+
+	plan, err := queryPlan(t, db, `SELECT COUNT(*) FROM likes l WHERE l.post_id = ?`, int64(1))
+	if err != nil {
+		t.Fatalf("EXPLAIN QUERY PLAN: %v", err)
+	}
+	if !strings.Contains(plan, "idx_likes_post") {
+		t.Errorf("likes count does not use idx_likes_post, plan was: %s", plan)
+	}
+	if strings.Contains(plan, "SCAN") {
+		t.Errorf("likes count still scans, plan was: %s", plan)
+	}
+}
+
+// TestLikesCountScansWithoutTheIndex proves the assertion above is not vacuous:
+// suppressing the index with NOT INDEXED reproduces the pre-004 plan, so the
+// test would fail if idx_likes_post were dropped from a migration.
+func TestLikesCountScansWithoutTheIndex(t *testing.T) {
+	db := migratedDB(t)
+
+	plan, err := queryPlan(t, db, `SELECT COUNT(*) FROM likes l NOT INDEXED WHERE l.post_id = ?`, int64(1))
+	if err != nil {
+		t.Fatalf("EXPLAIN QUERY PLAN: %v", err)
+	}
+	if !strings.Contains(plan, "SCAN") {
+		t.Errorf("suppressed index still avoided a scan, plan was: %s", plan)
+	}
+}
+
+// queryPlan joins the EXPLAIN QUERY PLAN rows into one string so a test can
+// assert on the whole plan instead of a single line.
+func queryPlan(t *testing.T, db *sql.DB, query string, args ...any) (string, error) {
+	t.Helper()
+	rows, err := db.Query("EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	var lines []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			return "", err
+		}
+		lines = append(lines, detail)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return strings.Join(lines, "; "), nil
 }
