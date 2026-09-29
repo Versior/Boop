@@ -607,6 +607,19 @@ func TestContentTypeFollowsTheStoredExtension(t *testing.T) {
 	}
 }
 
+func TestOptionsURLAddressesAStoredKey(t *testing.T) {
+	// The route the server registers is built by appending the wildcard to
+	// UploadsPath, so the prefix has to be usable for both purposes.
+	if !strings.HasPrefix(UploadsPath, "/") || !strings.HasSuffix(UploadsPath, "/") {
+		t.Fatalf("UploadsPath = %q, want a path that starts and ends with a slash", UploadsPath)
+	}
+	opts := Options{DataDir: t.TempDir()}
+	const key = "2026/09/0123456789abcdef0123456789abcdef.png"
+	if got, want := opts.URL(key), UploadsPath+key; got != want {
+		t.Errorf("URL(%q) = %q, want %q", key, got, want)
+	}
+}
+
 func countAssets(t *testing.T, db *sql.DB) int {
 	t.Helper()
 	var count int

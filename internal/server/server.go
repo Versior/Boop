@@ -18,6 +18,7 @@ import (
 	"boop/internal/ai"
 	"boop/internal/auth"
 	"boop/internal/config"
+	"boop/internal/media"
 	"boop/internal/secretbox"
 	"boop/internal/settings"
 	"boop/internal/store"
@@ -167,7 +168,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/auth/me", s.handleMeAPI)
 	mux.HandleFunc("/api/v1/auth/", s.handleAuthFallback)
 	mux.HandleFunc("POST /api/v1/admin/uploads", s.handleUploadAPI)
-	mux.HandleFunc("GET /uploads/{key...}", s.handleUploads)
+	mux.HandleFunc("GET "+media.UploadsPath+"{key...}", s.handleUploads)
 	mux.HandleFunc("GET /static/", s.handleStatic)
 	mux.HandleFunc("/", s.handleNotFound)
 
@@ -257,6 +258,14 @@ func (s *server) displaySettings(r *http.Request) settings.Values {
 		return settings.Defaults()
 	}
 	return values
+}
+
+// mediaOpts is the storage configuration shared by every path that stores,
+// serves or links an upload. It exists so the upload handler, the asset route
+// and the JSON and HTML payloads all read one configuration rather than each
+// assembling their own.
+func (s *server) mediaOpts() media.Options {
+	return media.Options{DataDir: s.cfg.DataDir, MaxBytes: s.cfg.MaxUploadBytes()}
 }
 
 // handleHealthz reports process liveness and never touches external systems.

@@ -17,10 +17,6 @@ import (
 	"boop/internal/social"
 )
 
-// uploadsPrefix is the public path of stored assets. Task 5 writes files under
-// BOOP_DATA_DIR/uploads and must serve them from exactly this prefix.
-const uploadsPrefix = "/uploads/"
-
 const (
 	contentJSONBytes = 512 << 10
 	postPagePrefix   = "/p/"
@@ -74,16 +70,19 @@ type postPayload struct {
 	Assets     []assetPayload `json:"assets"`
 }
 
-func postPayloadOf(post content.Post) postPayload {
+// postPayloadOf projects a stored post into the JSON the API returns. It is a
+// method because the asset URLs it publishes depend on where uploads live.
+func (s *server) postPayloadOf(post content.Post) postPayload {
 	tags := post.Tags
 	if tags == nil {
 		tags = []string{}
 	}
+	opts := s.mediaOpts()
 	assets := make([]assetPayload, 0, len(post.Assets))
 	for _, asset := range post.Assets {
 		assets = append(assets, assetPayload{
 			ID:       asset.ID,
-			URL:      uploadsPrefix + asset.StorageKey,
+			URL:      opts.URL(asset.StorageKey),
 			MimeType: asset.MimeType,
 			Width:    asset.Width,
 			Height:   asset.Height,
@@ -330,7 +329,7 @@ func (s *server) handlePostsAPI(w http.ResponseWriter, r *http.Request) {
 	payload := make([]postPayload, 0, len(page.Posts))
 	states := s.viewerStates(r.Context(), r, postIDs(page.Posts))
 	for _, post := range page.Posts {
-		item := postPayloadOf(post)
+		item := s.postPayloadOf(post)
 		applyViewerState(&item, states)
 		payload = append(payload, item)
 	}
@@ -344,7 +343,7 @@ func (s *server) handlePostAPI(w http.ResponseWriter, r *http.Request) {
 		s.writeContentFailure(w, r, "post api", err)
 		return
 	}
-	payload := postPayloadOf(*post)
+	payload := s.postPayloadOf(*post)
 	applyViewerState(&payload, s.viewerStates(r.Context(), r, []int64{post.ID}))
 	writeJSON(w, http.StatusOK, map[string]any{"data": payload})
 }
@@ -438,7 +437,7 @@ func (s *server) cardOf(post content.Post, location *time.Location) postCard {
 	}
 	card.Datetime, card.TimeLabel = displayTime(post.PublishedAt, location)
 	if asset, ok := post.Cover(); ok {
-		card.ImageURL = uploadsPrefix + asset.StorageKey
+		card.ImageURL = s.mediaOpts().URL(asset.StorageKey)
 		card.ImageAlt = asset.AltText
 		if card.ImageAlt == "" {
 			card.ImageAlt = firstLine(post.BodyMarkdown)

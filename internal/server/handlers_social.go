@@ -354,7 +354,7 @@ func (s *server) handleBookmarksAPI(w http.ResponseWriter, r *http.Request) {
 	states := s.viewerStates(r.Context(), r, postIDs(posts))
 	payload := make([]postPayload, 0, len(posts))
 	for _, post := range posts {
-		item := postPayloadOf(post)
+		item := s.postPayloadOf(post)
 		applyViewerState(&item, states)
 		payload = append(payload, item)
 	}

@@ -16,10 +16,6 @@ import (
 const (
 	// uploadFieldName is the single multipart field the client sends.
 	uploadFieldName = "file"
-
-	// uploadsPath is the public prefix of every stored file. Task 4 already
-	// publishes asset URLs as uploadsPrefix + storage key.
-	uploadsPath = uploadsPrefix
 )
 
 // uploadPayload is the response of a successful upload.
@@ -49,9 +45,8 @@ func (s *server) handleUploadAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	asset, err := media.Store(r.Context(), s.db,
-		media.Options{DataDir: s.cfg.DataDir, MaxBytes: limit},
-		owner.ID, filename, data, time.Now())
+	opts := s.mediaOpts()
+	asset, err := media.Store(r.Context(), s.db, opts, owner.ID, filename, data, time.Now())
 	if err != nil {
 		s.writeUploadFailure(w, r, err)
 		return
@@ -63,7 +58,7 @@ func (s *server) handleUploadAPI(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusOK
 	}
 	writeJSON(w, status, map[string]any{"data": uploadPayload{
-		ID: asset.ID, URL: uploadsPath + asset.StorageKey, StorageKey: asset.StorageKey,
+		ID: asset.ID, URL: opts.URL(asset.StorageKey), StorageKey: asset.StorageKey,
 		MimeType: asset.MimeType, SizeBytes: asset.SizeBytes, Width: asset.Width, Height: asset.Height,
 		OriginalName: asset.OriginalName, Reused: asset.Reused,
 	}})
@@ -160,7 +155,7 @@ func (s *server) writeUploadFailure(w http.ResponseWriter, r *http.Request, err 
 func (s *server) handleUploads(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	contentType := media.ContentType(key)
-	file, info, err := media.Open(media.Options{DataDir: s.cfg.DataDir}, key)
+	file, info, err := media.Open(s.mediaOpts(), key)
 	if err != nil {
 		writeFailure(w, r, http.StatusNotFound, "not_found", "请求的资源不存在")
 		return

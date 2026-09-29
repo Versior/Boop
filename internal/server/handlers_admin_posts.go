@@ -76,7 +76,7 @@ func (s *server) handleCreatePostAPI(w http.ResponseWriter, r *http.Request) {
 		s.writeContentFailure(w, r, "create post", err)
 		return
 	}
-	payload := postPayloadOf(*post)
+	payload := s.postPayloadOf(*post)
 	applyViewerState(&payload, s.viewerStates(r.Context(), r, []int64{post.ID}))
 	writeJSON(w, http.StatusCreated, map[string]any{"data": payload})
 }
@@ -112,7 +112,7 @@ func (s *server) handlePatchPostAPI(w http.ResponseWriter, r *http.Request) {
 		s.writeContentFailure(w, r, "update post", err)
 		return
 	}
-	payload := postPayloadOf(*post)
+	payload := s.postPayloadOf(*post)
 	applyViewerState(&payload, s.viewerStates(r.Context(), r, []int64{post.ID}))
 	writeJSON(w, http.StatusOK, map[string]any{"data": payload})
 }

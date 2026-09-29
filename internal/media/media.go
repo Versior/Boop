@@ -35,6 +35,12 @@ const (
 	// UploadsDirName is the directory created under BOOP_DATA_DIR.
 	UploadsDirName = "uploads"
 
+	// UploadsPath is the public path prefix of a locally stored asset and the
+	// route the server registers to serve one. Options.URL is the only place
+	// that combines it with a key, so the route and every published address
+	// cannot drift apart.
+	UploadsPath = "/uploads/"
+
 	// randomKeyBytes makes the public name of a file unguessable: the storage
 	// key is the only handle a client ever sees.
 	randomKeyBytes = 16
@@ -117,6 +123,14 @@ type assetRow struct {
 // Root is the absolute upload directory under BOOP_DATA_DIR.
 func (o Options) Root() string {
 	return filepath.Join(o.DataDir, UploadsDirName)
+}
+
+// URL is the address a client uses to read a stored asset. It is the single
+// place that turns a storage key into a public URL: the JSON payloads, the feed
+// cards and the link-preview image all come through here, so every copy of an
+// asset's address is built from the same rule.
+func (o Options) URL(key string) string {
+	return UploadsPath + key
 }
 
 // Store persists data as an asset of ownerID and returns it. Identical bytes
