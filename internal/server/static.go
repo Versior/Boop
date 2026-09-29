@@ -130,7 +130,7 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 
 	header := w.Header()
 	header.Set("Content-Type", asset.contentType)
-	header.Set("Cache-Control", "public, max-age=31536000, immutable")
+	header.Set("Cache-Control", immutableCacheControl)
 	// Two representations exist for the same URL, so both the ETag and Vary have
 	// to distinguish them.
 	header.Set("Vary", "Accept-Encoding")

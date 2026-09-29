@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"boop/internal/config"
 	"boop/internal/media"
 )
 
@@ -209,6 +210,95 @@ func (f *authFixture) uploadPOSTFor(t *testing.T, body *bytes.Buffer, contentTyp
 	rec := httptest.NewRecorder()
 	f.handler.ServeHTTP(rec, req)
 	return rec
+}
+
+// ---------- uploads in an object bucket ----------
+
+// objectStorageConfig points uploads at a bucket, which is what turns the asset
+// route into a redirect and every published address into a CDN address.
+func objectStorageConfig(endpoint string) config.Config {
+	cfg := testConfig()
+	cfg.Storage = config.Storage{
+		Endpoint:  endpoint,
+		Region:    "auto",
+		Bucket:    "boop-uploads",
+		Prefix:    "uploads",
+		PublicURL: "https://uploads.example.com",
+		AccessKey: "an-access-key",
+		SecretKey: "a-secret-key",
+	}
+	return cfg
+}
+
+// fakeObjectEndpoint accepts every write, which is all the server needs in order
+// to finish an upload that does not go to disk.
+func fakeObjectEndpoint(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestUploadPublishesTheBucketAddress(t *testing.T) {
+	endpoint := fakeObjectEndpoint(t)
+	c := newContentFixtureWithConfig(t, objectStorageConfig(endpoint.URL))
+
+	asset := c.uploadPNG(t, "雾海.png", pngFixture(t, 8, 5, 13))
+	key, ok := asset["storage_key"].(string)
+	if !ok {
+		t.Fatalf("storage_key missing from %v", asset)
+	}
+	want := "https://uploads.example.com/uploads/" + key
+	if asset["url"] != want {
+		t.Errorf("url = %v, want %q", asset["url"], want)
+	}
+	// Two copies that can disagree is worse than either one alone, so nothing
+	// may be written under the data directory while the bucket is in charge.
+	if files := c.storedFiles(t); len(files) != 0 {
+		t.Errorf("local files were written alongside the object: %v", files)
+	}
+
+	rec := c.do(t, http.MethodGet, "/uploads/"+key, "", nil, nil)
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("GET /uploads/%s: status = %d, want 301", key, rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != want {
+		t.Errorf("Location = %q, want %q", got, want)
+	}
+	if cache := rec.Header().Get("Cache-Control"); !strings.Contains(cache, "immutable") {
+		t.Errorf("Cache-Control = %q, want the redirect to be cacheable too", cache)
+	}
+}
+
+func TestAssetRouteStillRefusesKeysThatAddressNothing(t *testing.T) {
+	// The redirect must not become a way to publish an arbitrary address. Only a
+	// key with the generated shape leaves this process: every other request is
+	// answered here, and none of them is answered with a bucket address.
+	endpoint := fakeObjectEndpoint(t)
+	c := newContentFixtureWithConfig(t, objectStorageConfig(endpoint.URL))
+
+	targets := []string{
+		"/uploads/nope.png",
+		"/uploads/2026/09/not-hex.png",
+		"/uploads/2026/09/0123456789abcdef0123456789abcdef.svg",
+		"/uploads/../boop.db",
+		"/uploads/%2e%2e%2fsecret.txt",
+		"/uploads/..%2fsecret.txt",
+		`/uploads/2026\09\0123456789abcdef0123456789abcdef.png`,
+	}
+	for _, target := range targets {
+		t.Run(target, func(t *testing.T) {
+			rec := c.do(t, http.MethodGet, target, "", nil, nil)
+			if rec.Code == http.StatusOK {
+				t.Fatalf("status = 200 for %s", target)
+			}
+			if location := rec.Header().Get("Location"); strings.Contains(location, "uploads.example.com") {
+				t.Errorf("%s was answered with the bucket address %q", target, location)
+			}
+		})
+	}
 }
 
 // ---------- accepted and rejected content ----------

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"boop/internal/auth"
+	"boop/internal/config"
 	"boop/internal/content"
 )
 
@@ -25,7 +26,15 @@ type contentFixture struct {
 
 func newContentFixture(t *testing.T) *contentFixture {
 	t.Helper()
-	f := newAuthFixture(t)
+	return newContentFixtureWithConfig(t, testConfig())
+}
+
+// newContentFixtureWithConfig signs in the owner on a server built from a
+// specific configuration, which the storage tests need: whether uploads land on
+// disk or in a bucket is decided by the configuration and nothing else.
+func newContentFixtureWithConfig(t *testing.T, cfg config.Config) *contentFixture {
+	t.Helper()
+	f := newAuthFixtureWithConfig(t, cfg)
 	owner := f.bootstrapOwner(t, "owner@example.com", "遇事开心")
 	rec := f.login(t, "owner@example.com", authPassword, nil)
 	if rec.Code != http.StatusOK {

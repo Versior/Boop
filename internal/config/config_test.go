@@ -47,6 +47,117 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Errorf("LogLevel = %q, want info", cfg.LogLevel)
 	}
+	if cfg.Storage.Endpoint != "" || cfg.Storage.Bucket != "" || cfg.Storage.PublicURL != "" {
+		t.Errorf("Storage = %+v, want it empty so uploads stay under DataDir", cfg.Storage)
+	}
+}
+
+// objectEnvironment is a complete object-storage configuration, so each test
+// below only has to state the one variable it is about.
+func objectEnvironment() map[string]string {
+	return map[string]string{
+		"BOOP_R2_ENDPOINT":          "https://0123456789abcdef.r2.cloudflarestorage.com",
+		"BOOP_R2_BUCKET":            "boop-uploads",
+		"BOOP_R2_ACCESS_KEY_ID":     "an-access-key",
+		"BOOP_R2_SECRET_ACCESS_KEY": "a-secret-key",
+		"BOOP_R2_PUBLIC_URL":        "https://uploads.example.com",
+	}
+}
+
+func TestLoadReadsObjectStorage(t *testing.T) {
+	environment := objectEnvironment()
+	environment["BOOP_R2_PREFIX"] = "/uploads/"
+	environment["BOOP_R2_REGION"] = "auto"
+
+	cfg, err := load(envFrom(environment))
+	if err != nil {
+		t.Fatalf("load(): %v", err)
+	}
+	object := cfg.ObjectStorage()
+	if !object.Enabled() {
+		t.Fatal("object storage is disabled after a complete configuration")
+	}
+	if object.Endpoint != environment["BOOP_R2_ENDPOINT"] {
+		t.Errorf("endpoint = %q, want %q", object.Endpoint, environment["BOOP_R2_ENDPOINT"])
+	}
+	if object.Bucket != "boop-uploads" {
+		t.Errorf("bucket = %q, want boop-uploads", object.Bucket)
+	}
+	if object.PublicURL != "https://uploads.example.com" {
+		t.Errorf("public URL = %q, want https://uploads.example.com", object.PublicURL)
+	}
+	// A prefix is documented as a path, so it is accepted with the slashes a
+	// path carries and stored without them.
+	if object.Prefix != "uploads" {
+		t.Errorf("prefix = %q, want uploads", object.Prefix)
+	}
+	if object.RegionOrDefault() != "auto" {
+		t.Errorf("region = %q, want auto", object.RegionOrDefault())
+	}
+}
+
+func TestLoadDefaultsTheObjectStorageRegion(t *testing.T) {
+	// R2 signs with "auto"; an operator who never heard of a signing region
+	// should not have to discover it.
+	cfg, err := load(envFrom(objectEnvironment()))
+	if err != nil {
+		t.Fatalf("load(): %v", err)
+	}
+	if got := cfg.ObjectStorage().RegionOrDefault(); got != "auto" {
+		t.Errorf("region = %q, want auto", got)
+	}
+}
+
+func TestLoadRefusesAPartialObjectStorage(t *testing.T) {
+	// Each case drops exactly one variable and must name it in the error: a
+	// missing bucket reported as "object storage is misconfigured" would leave
+	// the operator to guess.
+	for _, variable := range []string{
+		"BOOP_R2_ENDPOINT", "BOOP_R2_BUCKET", "BOOP_R2_ACCESS_KEY_ID",
+		"BOOP_R2_SECRET_ACCESS_KEY", "BOOP_R2_PUBLIC_URL",
+	} {
+		t.Run(variable, func(t *testing.T) {
+			environment := objectEnvironment()
+			delete(environment, variable)
+
+			_, err := load(envFrom(environment))
+			if err == nil {
+				t.Fatalf("load() accepted a configuration without %s", variable)
+			}
+			if !strings.Contains(err.Error(), variable) {
+				t.Errorf("error %q does not name %s", err, variable)
+			}
+		})
+	}
+}
+
+func TestLoadRefusesAMalformedObjectStorage(t *testing.T) {
+	cases := map[string]map[string]string{
+		"endpoint without a scheme": {
+			"BOOP_R2_ENDPOINT": "0123456789abcdef.r2.cloudflarestorage.com",
+		},
+		"endpoint with credentials": {
+			"BOOP_R2_ENDPOINT": "https://key:secret@0123456789abcdef.r2.cloudflarestorage.com",
+		},
+		"endpoint that is not an S3 API address": {
+			"BOOP_R2_ENDPOINT": "ftp://0123456789abcdef.r2.cloudflarestorage.com",
+		},
+		"public URL with a query": {
+			"BOOP_R2_PUBLIC_URL": "https://uploads.example.com/?token=1",
+		},
+	}
+	for name, override := range cases {
+		t.Run(name, func(t *testing.T) {
+			environment := objectEnvironment()
+			for key, value := range override {
+				environment[key] = value
+			}
+
+			if _, err := load(envFrom(environment)); err == nil {
+				t.Fatalf("load() accepted %s", name)
+			}
+		})
+	}
 }
 
 func TestLoadReadsProcessEnvironment(t *testing.T) {

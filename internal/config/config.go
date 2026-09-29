@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"boop/internal/media"
 )
 
 // Documented defaults from docs/PRODUCT.md.
@@ -38,6 +40,50 @@ type Config struct {
 	SecureCookies bool
 	MaxUploadMB   int
 	LogLevel      string
+	// Storage is the object-store half of the upload configuration. It stays
+	// zero in the default deployment, where uploads are files under DataDir.
+	Storage Storage
+}
+
+// Storage is the S3-compatible bucket uploads can be kept in instead of the
+// local directory. docs/PRODUCT.md §6 puts the storage location under
+// environment control rather than the settings page, because a path or a bucket
+// is a deployment fact and a wrong one is not recoverable from a web form.
+type Storage struct {
+	Endpoint  string
+	Region    string
+	Bucket    string
+	Prefix    string
+	PublicURL string
+	AccessKey string
+	SecretKey string
+}
+
+// ObjectStorage maps the environment variables onto the media layer's own
+// description of a bucket, so the shape of the configuration is validated by
+// the code that has to use it.
+func (c Config) ObjectStorage() media.ObjectOptions {
+	return media.ObjectOptions{
+		Endpoint:  c.Storage.Endpoint,
+		Region:    c.Storage.Region,
+		Bucket:    c.Storage.Bucket,
+		Prefix:    c.Storage.Prefix,
+		PublicURL: c.Storage.PublicURL,
+		AccessKey: c.Storage.AccessKey,
+		SecretKey: c.Storage.SecretKey,
+	}
+}
+
+// storageVariables names every object-storage variable next to the value it
+// fills, so the read and the "what is missing" check cannot drift apart.
+func (c Config) storageVariables() [][2]string {
+	return [][2]string{
+		{"BOOP_R2_ENDPOINT", c.Storage.Endpoint},
+		{"BOOP_R2_BUCKET", c.Storage.Bucket},
+		{"BOOP_R2_ACCESS_KEY_ID", c.Storage.AccessKey},
+		{"BOOP_R2_SECRET_ACCESS_KEY", c.Storage.SecretKey},
+		{"BOOP_R2_PUBLIC_URL", c.Storage.PublicURL},
+	}
 }
 
 // Load reads and validates the BOOP_* environment variables.
@@ -124,7 +170,45 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 		}
 	}
 
+	cfg.Storage = Storage{
+		Endpoint: value(lookup, "BOOP_R2_ENDPOINT"),
+		Region:   value(lookup, "BOOP_R2_REGION"),
+		Bucket:   value(lookup, "BOOP_R2_BUCKET"),
+		// A prefix is written as a path in documentation and stored without its
+		// slashes, so both /uploads and uploads/ mean the same key namespace.
+		Prefix:    strings.Trim(value(lookup, "BOOP_R2_PREFIX"), "/"),
+		PublicURL: value(lookup, "BOOP_R2_PUBLIC_URL"),
+		AccessKey: value(lookup, "BOOP_R2_ACCESS_KEY_ID"),
+		SecretKey: value(lookup, "BOOP_R2_SECRET_ACCESS_KEY"),
+	}
+	if err := validateStorage(cfg); err != nil {
+		return Config{}, err
+	}
+
 	return cfg, nil
+}
+
+// validateStorage accepts an absent object store and refuses a half-configured
+// one: the process stops at startup rather than at the first upload of the day,
+// and the message names the variable that is missing.
+func validateStorage(cfg Config) error {
+	object := cfg.ObjectStorage()
+	if !object.Enabled() {
+		return nil
+	}
+	var missing []string
+	for _, variable := range cfg.storageVariables() {
+		if variable[1] == "" {
+			missing = append(missing, variable[0])
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("object storage is configured but incomplete, missing %s", strings.Join(missing, ", "))
+	}
+	if err := object.Validate(); err != nil {
+		return fmt.Errorf("object storage: %w", err)
+	}
+	return nil
 }
 
 // MaxUploadBytes is the request body ceiling derived from BOOP_MAX_UPLOAD_MB.

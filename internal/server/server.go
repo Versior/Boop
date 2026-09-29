@@ -30,6 +30,11 @@ const (
 	jsonContentType = "application/json; charset=utf-8"
 
 	apiPrefix = "/api/"
+
+	// immutableCacheControl is the lifetime of a resource whose address never
+	// means anything else: a versioned static asset, and a stored upload whose
+	// name is random and never rewritten.
+	immutableCacheControl = "public, max-age=31536000, immutable"
 )
 
 type server struct {
@@ -265,7 +270,11 @@ func (s *server) displaySettings(r *http.Request) settings.Values {
 // and the JSON and HTML payloads all read one configuration rather than each
 // assembling their own.
 func (s *server) mediaOpts() media.Options {
-	return media.Options{DataDir: s.cfg.DataDir, MaxBytes: s.cfg.MaxUploadBytes()}
+	return media.Options{
+		DataDir:  s.cfg.DataDir,
+		MaxBytes: s.cfg.MaxUploadBytes(),
+		Object:   s.cfg.ObjectStorage(),
+	}
 }
 
 // handleHealthz reports process liveness and never touches external systems.

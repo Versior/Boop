@@ -85,10 +85,12 @@ func IsImageMIME(mime string) bool {
 	return ok
 }
 
-// Options is the storage location and the per-file ceiling.
+// Options is the storage location and the per-file ceiling. Object is the zero
+// value in the default deployment, where uploads are files under DataDir.
 type Options struct {
 	DataDir  string
 	MaxBytes int64
+	Object   ObjectOptions
 }
 
 // Asset is a stored upload.
@@ -129,8 +131,22 @@ func (o Options) Root() string {
 // place that turns a storage key into a public URL: the JSON payloads, the feed
 // cards and the link-preview image all come through here, so every copy of an
 // asset's address is built from the same rule.
+//
+// When the bytes live in a bucket the address is the bucket's public hostname
+// rather than this process, so a reader's browser fetches an image from the CDN
+// and the 1-core server never carries the bytes.
 func (o Options) URL(key string) string {
-	return UploadsPath + key
+	if o.Object.PublicURL == "" {
+		return UploadsPath + key
+	}
+	return strings.TrimSuffix(o.Object.PublicURL, "/") + "/" + encodePath(o.Object.ObjectKey(key))
+}
+
+// Remote reports whether stored assets are read from somewhere other than this
+// process, which is what the asset route needs in order to answer with a
+// redirect instead of opening a file.
+func (o Options) Remote() bool {
+	return o.Object.PublicURL != ""
 }
 
 // Store persists data as an asset of ownerID and returns it. Identical bytes
@@ -163,7 +179,7 @@ func Store(ctx context.Context, db *sql.DB, opts Options, ownerID int64, filenam
 	if err != nil {
 		return nil, err
 	}
-	if err := writeFile(opts, key, data); err != nil {
+	if err := storeFile(ctx, opts, key, data); err != nil {
 		return nil, err
 	}
 
@@ -184,13 +200,13 @@ func Store(ctx context.Context, db *sql.DB, opts Options, ownerID int64, filenam
 	asset, reused, err := insertOrReuse(ctx, db, row)
 	if err != nil {
 		// An asset row no file exists for is fine; a file no row points at is not.
-		removeFile(opts, key)
+		removeFile(ctx, opts, key)
 		return nil, err
 	}
 	if reused {
 		// A concurrent upload of the same bytes won the race: keep its row and
 		// file, drop ours.
-		removeFile(opts, key)
+		removeFile(ctx, opts, key)
 	}
 	return asset, nil
 }
@@ -372,6 +388,16 @@ func newStorageKey(now time.Time, ext string) (string, error) {
 	return now.UTC().Format("2006/01") + "/" + hex.EncodeToString(buf[:]) + ext, nil
 }
 
+// storeFile writes the bytes of one asset to whichever backend the
+// configuration names. The two paths share one contract: on success the key
+// resolves to the bytes, and on failure nothing is left behind under that key.
+func storeFile(ctx context.Context, opts Options, key string, data []byte) error {
+	if opts.Object.Enabled() {
+		return opts.Object.put(ctx, key, data)
+	}
+	return writeFile(opts, key, data)
+}
+
 // writeFile writes through a temporary file in the target directory and renames
 // it, so a partially written upload is never visible under its key.
 func writeFile(opts Options, key string, data []byte) error {
@@ -401,7 +427,14 @@ func writeFile(opts Options, key string, data []byte) error {
 	return nil
 }
 
-func removeFile(opts Options, key string) {
+// removeFile undoes a store. It is best effort in both backends, and for the
+// same reason: the only caller is a store that is already failing, and the
+// asset it leaves behind is addressed by a random name nothing points at.
+func removeFile(ctx context.Context, opts Options, key string) {
+	if opts.Object.Enabled() {
+		opts.Object.delete(ctx, key)
+		return
+	}
 	os.Remove(filepath.Join(opts.Root(), filepath.FromSlash(key)))
 }
 

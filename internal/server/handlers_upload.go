@@ -152,10 +152,30 @@ func (s *server) writeUploadFailure(w http.ResponseWriter, r *http.Request, err 
 // handleUploads serves a stored file to anyone: article images are public and
 // need no session. The key shape is the traversal defense, and every key is
 // written once and never rewritten, so the response is immutable.
+//
+// When uploads live in a bucket, this route is a permanent redirect to the
+// bucket's public address instead of a file read. Published pages already link
+// there directly; what still arrives here is an old page or a relative link,
+// and answering it with a redirect keeps the address it used working without
+// putting image bytes through a 1-core process.
 func (s *server) handleUploads(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
+	opts := s.mediaOpts()
+	if opts.Remote() {
+		if !media.ValidStorageKey(key) {
+			writeFailure(w, r, http.StatusNotFound, "not_found", "请求的资源不存在")
+			return
+		}
+		// The mapping from key to object is a property of the deployment and
+		// never changes, so the redirect is as cacheable as the bytes: a
+		// returning visitor does not pay for it twice.
+		w.Header().Set("Cache-Control", immutableCacheControl)
+		http.Redirect(w, r, opts.URL(key), http.StatusMovedPermanently)
+		return
+	}
+
 	contentType := media.ContentType(key)
-	file, info, err := media.Open(s.mediaOpts(), key)
+	file, info, err := media.Open(opts, key)
 	if err != nil {
 		writeFailure(w, r, http.StatusNotFound, "not_found", "请求的资源不存在")
 		return
@@ -163,6 +183,6 @@ func (s *server) handleUploads(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.Header().Set("Cache-Control", immutableCacheControl)
 	http.ServeContent(w, r, path.Base(key), info.ModTime(), file)
 }
