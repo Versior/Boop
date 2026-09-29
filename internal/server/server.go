@@ -9,11 +9,9 @@ import (
 	stdhtml "html"
 	"html/template"
 	"io"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
-	"path"
 	"strings"
 	"time"
 
@@ -202,6 +200,10 @@ type pageView struct {
 	// avatar so a site can brand the tab without changing the face next to every
 	// post.
 	SiteIconURL string
+	// StaticVersion is appended to every /static URL. The assets are served
+	// immutable for a year, so the version is what a deploy changes to move
+	// returning visitors off the previous bytes.
+	StaticVersion string
 	// AIStatus is the author status card of the home right rail. It stays zero on
 	// every other page, so the shared shell renders no card outside the home page
 	// and no other page ever reads the AI cache.
@@ -225,6 +227,7 @@ func (s *server) shellViewWithSettings(r *http.Request, filter string, values se
 		SiteDescription: values.SiteDescription,
 		SiteAvatarURL:   values.SiteAvatarURL,
 		SiteIconURL:     values.SiteIconURL,
+		StaticVersion:   staticAssets().version,
 	}
 	if state, ok := authStateFrom(r.Context()); ok && state.authenticated {
 		view.CSRFToken = state.session.CSRFToken
@@ -267,46 +270,6 @@ func (s *server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	io.WriteString(w, "ready\n")
-}
-
-// handleStatic serves the embedded assets with explicit content types so the
-// result does not depend on the host MIME database.
-func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
-	name := strings.TrimPrefix(r.URL.Path, "/static/")
-	if name == r.URL.Path || !fs.ValidPath(name) {
-		writeFailure(w, r, http.StatusNotFound, "not_found", "请求的资源不存在")
-		return
-	}
-	content, err := fs.ReadFile(web.FS, "static/"+name)
-	if err != nil {
-		writeFailure(w, r, http.StatusNotFound, "not_found", "请求的资源不存在")
-		return
-	}
-	w.Header().Set("Content-Type", staticContentType(name))
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(content); err != nil {
-		s.logger.LogAttrs(r.Context(), slog.LevelWarn, "static write failed",
-			slog.String("asset", name), slog.String("error", err.Error()))
-	}
-}
-
-func staticContentType(name string) string {
-	switch strings.ToLower(path.Ext(name)) {
-	case ".css":
-		return "text/css; charset=utf-8"
-	case ".js":
-		return "text/javascript; charset=utf-8"
-	case ".svg":
-		return "image/svg+xml"
-	case ".png":
-		return "image/png"
-	case ".webp":
-		return "image/webp"
-	case ".ico":
-		return "image/x-icon"
-	default:
-		return "application/octet-stream"
-	}
 }
 
 // handleNotFound answers unknown paths: JSON for the API, HTML for pages.

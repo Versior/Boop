@@ -521,7 +521,7 @@ func TestSiteIconFaviconFallback(t *testing.T) {
 		siteIcon    = "https://cdn.example.com/site-icon.png"
 		ownerAvatar = "https://cdn.example.com/owner-avatar.png"
 	)
-	builtin := `<link rel="icon" type="image/svg+xml" href="/static/brand/boop-mark.svg">`
+	builtin := `<link rel="icon" type="image/svg+xml" href="/static/brand/boop-mark.svg?v=` + staticAssets().version + `">`
 
 	patch := func(body string) {
 		t.Helper()
