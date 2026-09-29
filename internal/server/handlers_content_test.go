@@ -734,9 +734,9 @@ func TestHomePageEmptyStateAndFilters(t *testing.T) {
 }
 
 // The home page opens with the author's block and the content-type row. The
-// block is the site's front door - cover image, big avatar, the one-line bio -
-// and the row carries a count per view, because a row of links that only
-// repeated the navigation would be saying nothing the sidebar does not.
+// block is the site's front door - cover image, big avatar, the bio - and the
+// row carries a count per view, because a row of links that only repeated the
+// navigation would be saying nothing the sidebar does not.
 func TestHomePageAuthorHeaderAndTypeRow(t *testing.T) {
 	c := newContentFixture(t)
 	assetID := c.insertAssetFixture(t, "2026/09/header.jpg")
@@ -790,9 +790,12 @@ func TestHomePageAuthorHeaderAndTypeRow(t *testing.T) {
 	if strings.Contains(body, "type=moment") {
 		t.Error("the type row offers a moment filter")
 	}
-	// The two dates are the ends of the list the reader is looking at: the first
-	// post that went up, and the most recent one. Both carry the stored value in
-	// datetime and a readable one in the site timezone.
+	// The three facts each carry an icon. That is the shape the front door was
+	// laid out to: a plain run of text reads as one sentence chopped up by
+	// spaces, and the row is three parallel entries. The sprite symbols are
+	// asserted alongside them because a <use> to a symbol whose viewBox has a
+	// non-zero origin draws nothing at all while every markup assertion stays
+	// green - the failure mode that already cost one afternoon here.
 	location := loadLocation(settings.Defaults().SiteTimezone)
 	sinceISO := oldest["published_at"].(string)
 	updatedISO := newest["published_at"].(string)
@@ -802,9 +805,11 @@ func TestHomePageAuthorHeaderAndTypeRow(t *testing.T) {
 	}
 	wantSince := parsedSince.In(location).Format("2006年1月2日")
 	for _, want := range []string{
-		`<span class="author-fact">始于 <time datetime="` + sinceISO + `">` + wantSince + `</time></span>`,
-		`<span class="author-fact">最近更新于 <time datetime="` + updatedISO + `">`,
-		`<a class="author-fact author-rss" href="/feed.xml">RSS 订阅</a>`,
+		`<span class="author-fact"><svg class="ic ic-fact" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-calendar"/></svg>始于 <time datetime="` + sinceISO + `">` + wantSince + `</time></span>`,
+		`<span class="author-fact"><svg class="ic ic-fact" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-calendar"/></svg>最近更新于 <time datetime="` + updatedISO + `">`,
+		`<a class="author-fact author-rss" href="/feed.xml"><svg class="ic ic-fact" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-rss"/></svg>RSS 订阅</a>`,
+		`<symbol id="i-rss" viewBox="0 0 24 24">`,
+		`<symbol id="i-calendar" viewBox="0 0 24 24">`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the author block is missing %s", want)
@@ -812,6 +817,19 @@ func TestHomePageAuthorHeaderAndTypeRow(t *testing.T) {
 	}
 	if strings.Contains(body, `最近更新于 <time datetime="`+updatedISO+`"></time>`) {
 		t.Error("the author block dates the site with an empty string")
+	}
+	// The avatar is a block of its own above the name, not a column beside it,
+	// and it is bigger than a feed avatar. Both live in the stylesheet, so the
+	// stylesheet is read: the markup alone cannot tell the two layouts apart.
+	css := c.do(t, http.MethodGet, "/static/app.css", "", nil, nil).Body.String()
+	for _, want := range []string{
+		`.author-id{display:flex;flex-direction:column`,
+		`.author-id .avatar{width:104px;height:104px;`,
+		`.author-head.has-cover .author-id .avatar{margin-top:-52px}`,
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("app.css no longer lays the author block out that way: missing %s", want)
+		}
 	}
 	// Boop has one author and no follow graph (docs/PRODUCT.md §7), so the block
 	// must not grow the empty follow/fan counters a user profile would carry.

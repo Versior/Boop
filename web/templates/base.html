@@ -120,6 +120,19 @@
     <path d="M10.6 13.4a3.9 3.9 0 0 0 5.5 0l3.2-3.2a3.9 3.9 0 0 0-5.5-5.5l-1.4 1.4"/>
     <path d="M13.4 10.6a3.9 3.9 0 0 0-5.5 0l-3.2 3.2a3.9 3.9 0 0 0 5.5 5.5l1.4-1.4"/>
   </symbol>
+  <!-- 作者头部那三件事各配一枚图标（RSS 订阅 / 始于 / 最近更新于）。图形语言与这套精灵
+       其余图标一致：24 网格、只描边不填充、1.8 描边。订阅那颗点是实心的，所以它显式
+       写 fill:currentColor + stroke:none——.ic 的基类是 fill:none，光给 circle 描边会
+       得到一个小圆环，看着像「有一个附件」而不是「一个订阅源」。 -->
+  <symbol id="i-rss" viewBox="0 0 24 24">
+    <circle cx="5.4" cy="18.6" r="1.7" fill="currentColor" stroke="none"/>
+    <path d="M4 11.4a8.6 8.6 0 0 1 8.6 8.6"/>
+    <path d="M4 4.4a15.6 15.6 0 0 1 15.6 15.6"/>
+  </symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24">
+    <rect x="3.6" y="5.4" width="16.8" height="15" rx="2.4"/>
+    <path d="M8.2 3.2v4.2M15.8 3.2v4.2M3.6 10.6h16.8"/>
+  </symbol>
   <symbol id="i-avatar" viewBox="0 0 48 48">
     <rect width="48" height="48" rx="24" fill="var(--chip)"/>
     <circle cx="24" cy="18.5" r="7.6" fill="currentColor" fill-opacity=".55"/>

@@ -1,10 +1,12 @@
 {{define "content"}}
     <h1 class="sr-only">{{.SiteName}} 首页</h1>
 
-    <!-- 作者头部：封面图 + 大头像 + 站长标识 + 简介 + 两条日期。Boop 只有一个作者、没有
-         关注关系（docs/PRODUCT.md §7），所以这里是站点自己的门面，不是用户主页：没有关注/
-         粉丝这类空壳数字，有的只是这个站真实存在的事实——第一篇文章是哪天发的、最近一篇是
-         哪天发的。两端都取自信息流自己列出的内容（content.PublishedSpan 与 Feed 同一排序），
+    <!-- 作者头部：封面图 + 大头像 + 站长标识 + 简介 + 三件事（RSS 订阅 / 始于 / 最近更新于）。
+         形态参考站长给的那张个人主页截图：头像单独占一行并压住封面图下沿，名称与标识在头像
+         下方左对齐，再下面是简介，最后是带图标的一行事实。**没有统计数字那一行**——图里那行
+         是「关注中 / 关注者 / 获赞」，Boop 只有一个作者、没有关注关系（docs/PRODUCT.md §7），
+         站长要的是把那一行换成简介，所以这里既没有关注数也没有粉丝数，只有这个站真实存在的
+         事实。两端都取自信息流自己列出的内容（content.PublishedSpan 与 Feed 同一排序），
          所以「最近更新于」永远不会指向信息流顶上那张卡之外的东西。封面图留空时整条横带不
          渲染，头像也不会被顶上去。 -->
     {{if .Header.Show}}
@@ -21,9 +23,9 @@
           </div>
           {{if .Header.Bio}}<p class="author-bio">{{.Header.Bio}}</p>{{end}}
           <p class="author-facts">
-            {{with .Header.Since}}<span class="author-fact">始于 <time datetime="{{$.Header.SinceISO}}">{{.}}</time></span>{{end}}
-            {{with .Header.Updated}}<span class="author-fact">最近更新于 <time datetime="{{$.Header.UpdatedISO}}">{{.}}</time></span>{{end}}
-            <a class="author-fact author-rss" href="/feed.xml">RSS 订阅</a>
+            {{with .Header.Since}}<span class="author-fact"><svg class="ic ic-fact" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-calendar"/></svg>始于 <time datetime="{{$.Header.SinceISO}}">{{.}}</time></span>{{end}}
+            {{with .Header.Updated}}<span class="author-fact"><svg class="ic ic-fact" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-calendar"/></svg>最近更新于 <time datetime="{{$.Header.UpdatedISO}}">{{.}}</time></span>{{end}}
+            <a class="author-fact author-rss" href="/feed.xml"><svg class="ic ic-fact" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-rss"/></svg>RSS 订阅</a>
           </p>
         </div>
       </div>
