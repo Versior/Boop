@@ -125,7 +125,7 @@ func (s *server) handleAdminCommentsPage(w http.ResponseWriter, r *http.Request)
 		values = settings.Defaults()
 	}
 	view := adminQueueView{
-		pageView:    s.shellView(r, navNeutralFilter),
+		pageView:    s.adminShellView(r, adminSectionComments),
 		Status:      status,
 		Comments:    s.commentViewsOf(queue, loadLocation(values.SiteTimezone), socialCommentViewer{signedIn: true, owner: true, userID: state.user.ID}),
 		Empty:       len(queue) == 0,

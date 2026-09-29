@@ -710,7 +710,7 @@ func TestAdminSettingsPageAndIndex(t *testing.T) {
 	readerCookie := sessionCookie(t, f.register(t, "reader@example.com", "读者甲"))
 
 	t.Run("guest is sent to the sign-in page", func(t *testing.T) {
-		for _, target := range []string{"/admin", "/admin/settings"} {
+		for _, target := range []string{"/admin", "/admin/settings", "/admin/settings/site", "/admin/settings/ai"} {
 			rec := f.do(t, http.MethodGet, target, "", nil, nil)
 			if rec.Code != http.StatusSeeOther {
 				t.Fatalf("%s: status = %d, want 303", target, rec.Code)
@@ -722,7 +722,7 @@ func TestAdminSettingsPageAndIndex(t *testing.T) {
 	})
 
 	t.Run("a reader is refused", func(t *testing.T) {
-		for _, target := range []string{"/admin", "/admin/settings"} {
+		for _, target := range []string{"/admin", "/admin/settings", "/admin/settings/site", "/admin/settings/ai"} {
 			rec := f.do(t, http.MethodGet, target, "", nil, readerCookie)
 			if rec.Code != http.StatusForbidden {
 				t.Fatalf("%s: status = %d, want 403", target, rec.Code)
@@ -733,39 +733,128 @@ func TestAdminSettingsPageAndIndex(t *testing.T) {
 		}
 	})
 
+	// Every category is its own page with its own form, and the form carries only
+	// that category's fields: the endpoint is a partial update, so the fields a
+	// page does not show keep their stored values without being round-tripped.
+	categories := []struct {
+		section string
+		label   string
+		own     []string
+	}{
+		{"site", "站点", []string{
+			`name="site_name"`, `name="site_description"`, `name="site_avatar_url"`,
+			`name="site_icon_url"`, `name="site_timezone"`, `name="page_size"`,
+		}},
+		{"registration", "注册与评论", []string{
+			`name="registration_enabled"`, `name="comments_enabled"`, `name="comments_moderation_enabled"`,
+		}},
+		{"github", "GitHub 登录", []string{
+			`name="github_client_id"`, `name="github_client_secret"`,
+			`data-secret-clear="github.client_id"`, `data-secret-clear="github.client_secret"`,
+		}},
+		{"ai", "AI", []string{
+			`name="ai_enabled"`, `name="ai_base_url"`, `name="ai_chat_model"`,
+			`name="ai_embedding_model"`, `name="ai_author_status_ttl_hours"`,
+			`name="ai_api_key"`, `data-secret-clear="ai.api_key"`,
+		}},
+	}
+	t.Run("each category renders only its own fields", func(t *testing.T) {
+		for _, category := range categories {
+			rec := f.do(t, http.MethodGet, "/admin/settings/"+category.section, "", nil, ownerCookie)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("/admin/settings/%s: status = %d, want 200", category.section, rec.Code)
+			}
+			body := rec.Body.String()
+			for _, marker := range []string{
+				`data-settings-form`,
+				`data-settings-action="/api/v1/admin/settings"`,
+				`data-settings-submit`,
+				`class="app is-admin"`,
+				`class="rail-admin"`,
+				// The page names its own category: four categories are four
+				// forms, so a shared "设置" heading would leave the reader to
+				// work out which one they are editing from the tab row alone.
+				`>` + category.label + `设置<`,
+			} {
+				if !strings.Contains(body, marker) {
+					t.Errorf("/admin/settings/%s is missing %s", category.section, marker)
+				}
+			}
+			for _, marker := range category.own {
+				if !strings.Contains(body, marker) {
+					t.Errorf("/admin/settings/%s is missing %s", category.section, marker)
+				}
+			}
+			// A field belonging to another category would be submitted by this
+			// page's form and silently overwrite it.
+			for _, other := range categories {
+				if other.section == category.section {
+					continue
+				}
+				for _, marker := range other.own {
+					if strings.Contains(body, marker) {
+						t.Errorf("/admin/settings/%s renders %s, which belongs to %s",
+							category.section, marker, other.section)
+					}
+				}
+			}
+		}
+	})
+
+	t.Run("the category row is the way between them", func(t *testing.T) {
+		for _, category := range categories {
+			body := f.do(t, http.MethodGet, "/admin/settings/"+category.section, "", nil, ownerCookie).Body.String()
+			row := markupBlock(t, body, `class="admin-tabs"`, "</nav>")
+			// Count the links rather than a class prefix: the row's own class is
+			// "admin-tabs", which a prefix match on "admin-tab" would also catch.
+			if got := strings.Count(row, `href="/admin/settings/`); got != len(categories) {
+				t.Errorf("/admin/settings/%s links %d categories, want %d", category.section, got, len(categories))
+			}
+			if got := strings.Count(row, `aria-current="page"`); got != 1 {
+				t.Errorf("/admin/settings/%s marks %d tabs current, want 1", category.section, got)
+			}
+			// Every category is one click from every other, the current one
+			// included, so the row is a complete way between them.
+			for _, other := range categories {
+				if !strings.Contains(row, `href="/admin/settings/`+other.section+`"`) {
+					t.Errorf("/admin/settings/%s does not reach %s from the row",
+						category.section, other.section)
+				}
+			}
+		}
+	})
+
+	t.Run("an unknown category is a 404", func(t *testing.T) {
+		rec := f.do(t, http.MethodGet, "/admin/settings/nope", "", nil, ownerCookie)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "没有这个设置分类") {
+			t.Errorf("body = %q", rec.Body.String())
+		}
+	})
+
 	t.Run("the owner gets the form", func(t *testing.T) {
 		if err := settings.Apply(t.Context(), f.db, settingsBox(t, f), settings.Update{
 			Secrets: map[string]string{settings.SecretKeyGitHubClientSecret: settingsClientSecret},
 		}); err != nil {
 			t.Fatalf("store a secret: %v", err)
 		}
-		rec := f.do(t, http.MethodGet, "/admin/settings", "", nil, ownerCookie)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+		site := f.do(t, http.MethodGet, "/admin/settings/site", "", nil, ownerCookie)
+		if site.Code != http.StatusOK {
+			t.Fatalf("site: status = %d, want 200: %s", site.Code, site.Body.String())
 		}
-		body := rec.Body.String()
-		for _, marker := range []string{
-			`data-settings-form`,
-			`data-settings-action="/api/v1/admin/settings"`,
-			`name="site_name"`,
-			`name="site_description"`,
-			`name="site_avatar_url"`,
-			`name="site_icon_url"`,
-			`name="page_size"`,
-			`name="registration_enabled"`,
-			`name="ai_api_key"`,
-			`data-secret-clear="github.client_secret"`,
-			`data-settings-submit`,
-		} {
-			if !strings.Contains(body, marker) {
-				t.Errorf("the settings page is missing %s", marker)
-			}
+		if !strings.Contains(site.Body.String(), `value="Boop"`) {
+			t.Error("the site category does not render the stored site name")
 		}
-		if !strings.Contains(body, `value="Boop"`) {
-			t.Error("the page does not render the stored site name")
+
+		github := f.do(t, http.MethodGet, "/admin/settings/github", "", nil, ownerCookie)
+		body := github.Body.String()
+		if github.Code != http.StatusOK {
+			t.Fatalf("github: status = %d, want 200: %s", github.Code, body)
 		}
 		if !strings.Contains(body, testOrigin+oauthCallbackPath) {
-			t.Error("the page does not show the OAuth callback address")
+			t.Error("the GitHub category does not show the OAuth callback address")
 		}
 		// A configured secret says so and never repeats its value; an unconfigured
 		// one says so as well.
@@ -780,14 +869,16 @@ func TestAdminSettingsPageAndIndex(t *testing.T) {
 		}
 	})
 
-	t.Run("the index redirects to the settings page", func(t *testing.T) {
-		rec := f.do(t, http.MethodGet, "/admin", "", nil, ownerCookie)
-		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/admin/settings" {
-			t.Fatalf("status = %d, Location = %q", rec.Code, rec.Header().Get("Location"))
+	t.Run("the settings index lands on the first category", func(t *testing.T) {
+		for _, target := range []string{"/admin", "/admin/settings"} {
+			rec := f.do(t, http.MethodGet, target, "", nil, ownerCookie)
+			if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/admin/settings/site" {
+				t.Fatalf("%s: status = %d, Location = %q", target, rec.Code, rec.Header().Get("Location"))
+			}
 		}
 	})
 
-	t.Run("without a master key the page warns", func(t *testing.T) {
+	t.Run("without a master key the secret categories warn", func(t *testing.T) {
 		plain := newAuthFixture(t)
 		if err := settings.Seed(t.Context(), plain.db); err != nil {
 			t.Fatalf("settings.Seed: %v", err)
@@ -795,12 +886,20 @@ func TestAdminSettingsPageAndIndex(t *testing.T) {
 		plainOwner := plain.bootstrapOwner(t, "owner@example.com", "遇事开心")
 		plainCookie := sessionCookie(t, plain.login(t, plainOwner.Email, authPassword, nil))
 
-		rec := plain.do(t, http.MethodGet, "/admin/settings", "", nil, plainCookie)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200", rec.Code)
+		for _, category := range []string{"github", "ai"} {
+			rec := plain.do(t, http.MethodGet, "/admin/settings/"+category, "", nil, plainCookie)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s: status = %d, want 200", category, rec.Code)
+			}
+			if !strings.Contains(rec.Body.String(), "未配置 BOOP_MASTER_KEY") {
+				t.Errorf("the %s category does not warn about the missing master key", category)
+			}
 		}
-		if !strings.Contains(rec.Body.String(), "未配置 BOOP_MASTER_KEY") {
-			t.Error("the page does not warn about the missing master key")
+		// The warning is about credential fields, so a category without one must
+		// not carry it.
+		rec := plain.do(t, http.MethodGet, "/admin/settings/site", "", nil, plainCookie)
+		if strings.Contains(rec.Body.String(), "未配置 BOOP_MASTER_KEY") {
+			t.Error("a category without credential fields warns about the master key")
 		}
 	})
 
@@ -838,7 +937,7 @@ func TestAdminSettingsPageFailsClosed(t *testing.T) {
 		`UPDATE settings SET value_json = '"not a number"' WHERE key = ?`, settings.KeyContentPageSize); err != nil {
 		t.Fatalf("corrupt setting: %v", err)
 	}
-	rec := f.do(t, http.MethodGet, "/admin/settings", "", nil, cookie)
+	rec := f.do(t, http.MethodGet, "/admin/settings/site", "", nil, cookie)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body.String())
 	}

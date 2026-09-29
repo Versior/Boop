@@ -310,7 +310,7 @@ func TestPrivatePagesAreNoIndex(t *testing.T) {
 		{"/bookmarks", true, true},
 		{"/login", false, true},
 		{"/register", false, true},
-		{"/admin/settings", true, true},
+		{"/admin/settings/site", true, true},
 		{"/admin/comments", true, true},
 		{"/", false, false},
 		{"/p/" + slug, false, false},

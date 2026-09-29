@@ -205,32 +205,112 @@ func (s *server) handlePatchSettingsAPI(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"data": payload})
 }
 
-// handleAdminIndex sends the owner to the settings page: /admin is the admin
-// entry point (docs/API.md HTML 页面) and settings is where it leads.
-func (s *server) handleAdminIndex(w http.ResponseWriter, r *http.Request) {
+// ownerOnlyPage resolves the two refusals every owner-only page shares: a guest
+// is sent to the sign-in page and a signed-in reader gets an explicit 403. The
+// message is per page because it names what the reader cannot do.
+func (s *server) ownerOnlyPage(w http.ResponseWriter, r *http.Request, refusal string) bool {
 	state, ok := authStateFrom(r.Context())
 	if !ok || !state.authenticated {
 		http.Redirect(w, r, loginPath, http.StatusSeeOther)
-		return
+		return false
 	}
 	if !state.user.IsOwner() {
-		writeFailure(w, r, http.StatusForbidden, "forbidden", "只有站长可以进入管理页面")
-		return
+		writeFailure(w, r, http.StatusForbidden, "forbidden", refusal)
+		return false
 	}
-	http.Redirect(w, r, "/admin/settings", http.StatusSeeOther)
+	return true
 }
 
-// handleAdminSettingsPage renders the settings form. Guests are sent to the
-// sign-in page and signed-in readers get an explicit 403, like the moderation
-// page.
-func (s *server) handleAdminSettingsPage(w http.ResponseWriter, r *http.Request) {
-	state, ok := authStateFrom(r.Context())
-	if !ok || !state.authenticated {
-		http.Redirect(w, r, loginPath, http.StatusSeeOther)
+// handleAdminIndex sends the owner into the back end: /admin is the entry point
+// (docs/API.md HTML 页面) and the first settings category is where it leads.
+func (s *server) handleAdminIndex(w http.ResponseWriter, r *http.Request) {
+	if !s.ownerOnlyPage(w, r, "只有站长可以进入管理页面") {
 		return
 	}
-	if !state.user.IsOwner() {
-		writeFailure(w, r, http.StatusForbidden, "forbidden", "只有站长可以修改设置")
+	http.Redirect(w, r, settingsSectionURL(defaultSettingsSection), http.StatusSeeOther)
+}
+
+// handleAdminSettingsIndex keeps working the address the single-page form used to
+// live at. That page is now one category per page, so the bare address names the
+// default one instead of the whole set.
+func (s *server) handleAdminSettingsIndex(w http.ResponseWriter, r *http.Request) {
+	if !s.ownerOnlyPage(w, r, "只有站长可以修改设置") {
+		return
+	}
+	http.Redirect(w, r, settingsSectionURL(defaultSettingsSection), http.StatusSeeOther)
+}
+
+// adminSettingsSections is the settings taxonomy: every category is its own page,
+// so the back end has visible structure instead of one long scroll. The order
+// here is the order of the tab row.
+type adminSettingsSection struct {
+	Key   string
+	Label string
+	// Hint is the line under the page title: what this category decides.
+	Hint string
+	// Secrets is true for a category whose form carries credential fields, which
+	// are the ones a missing BOOP_MASTER_KEY makes unusable.
+	Secrets bool
+}
+
+const (
+	adminSettingsPrefix    = "/admin/settings/"
+	defaultSettingsSection = "site"
+	// adminSectionSettings and adminSectionComments are the pageView.Admin
+	// values, so the shell knows which back-end entry to mark as current.
+	adminSectionSettings = "settings"
+	adminSectionComments = "comments"
+)
+
+var adminSettingsSections = []adminSettingsSection{
+	{
+		Key:   "site",
+		Label: "站点",
+		Hint:  "站点名称、简介、头像与图标、时区与每页条数。保存后立刻生效；上传目录、单文件大小与允许的图片类型只能通过环境变量配置，不在这一页。",
+	},
+	{
+		Key:   "registration",
+		Label: "注册与评论",
+		Hint:  "公开注册与评论的开关。关闭注册后已有账号仍可登录，包括 GitHub 绑定的账号。",
+	},
+	{
+		Key:     "github",
+		Label:   "GitHub 登录",
+		Secrets: true,
+		Hint:    "GitHub OAuth App 的凭据。回调地址必须与 GitHub 上填写的完全一致；密钥只会加密保存，任何页面都不会回显。",
+	},
+	{
+		Key:     "ai",
+		Label:   "AI",
+		Secrets: true,
+		Hint:    "OpenAI-compatible 服务；作者状态与写作助手在配置完成后生效。密钥只会加密保存，任何页面都不会回显。",
+	},
+}
+
+// settingsSectionOf resolves a path segment to a category.
+func settingsSectionOf(key string) (adminSettingsSection, bool) {
+	for _, section := range adminSettingsSections {
+		if section.Key == key {
+			return section, true
+		}
+	}
+	return adminSettingsSection{}, false
+}
+
+// settingsSectionURL is the address of one category.
+func settingsSectionURL(key string) string { return adminSettingsPrefix + key }
+
+// handleAdminSettingsPage renders one settings category. The page shows only the
+// fields of that category, so the form it submits carries only those fields:
+// PATCH /api/v1/admin/settings is a partial update, so the rest keep their stored
+// values without the page having to round-trip them.
+func (s *server) handleAdminSettingsPage(w http.ResponseWriter, r *http.Request) {
+	if !s.ownerOnlyPage(w, r, "只有站长可以修改设置") {
+		return
+	}
+	section, ok := settingsSectionOf(r.PathValue("section"))
+	if !ok {
+		writeFailure(w, r, http.StatusNotFound, "not_found", "没有这个设置分类")
 		return
 	}
 
@@ -244,13 +324,15 @@ func (s *server) handleAdminSettingsPage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.render(w, r, http.StatusOK, "admin_settings", adminSettingsView{
-		pageView: s.shellView(r, navNeutralFilter),
+		pageView: s.adminShellView(r, adminSectionSettings),
 		Settings: payload,
 		BaseURL:  s.cfg.BaseURL,
+		Section:  section,
+		Tabs:     settingsTabsOf(section.Key),
 	})
 }
 
-// adminSettingsView drives the settings form. Secret values are absent on
+// adminSettingsView drives one settings category. Secret values are absent on
 // purpose: the page only learns whether each one is configured.
 type adminSettingsView struct {
 	pageView
@@ -258,6 +340,29 @@ type adminSettingsView struct {
 	// BaseURL is the configured origin, shown so the owner can copy the exact
 	// OAuth callback address.
 	BaseURL string
+	// Section is the category this page is, and Tabs is the row that switches
+	// between them.
+	Section adminSettingsSection
+	Tabs    []settingsTab
+}
+
+// settingsTab is one entry of the category row.
+type settingsTab struct {
+	Label  string
+	URL    string
+	Active bool
+}
+
+func settingsTabsOf(active string) []settingsTab {
+	tabs := make([]settingsTab, 0, len(adminSettingsSections))
+	for _, section := range adminSettingsSections {
+		tabs = append(tabs, settingsTab{
+			Label:  section.Label,
+			URL:    settingsSectionURL(section.Key),
+			Active: section.Key == active,
+		})
+	}
+	return tabs
 }
 
 // writeSettingsFailure maps a settings error onto the documented envelope.

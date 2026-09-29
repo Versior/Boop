@@ -35,6 +35,8 @@ html{-webkit-text-size-adjust:100%}
   --main-w:600px;
   --aside-w:336px;
   --rail-icon-w:68px;
+  /* 后台侧栏带文字，比前台的图标条宽：模块名必须看得见。 */
+  --rail-admin-w:230px;
   --pad:16px;
 }
 [data-theme="dark"]{
@@ -118,6 +120,8 @@ h1,h2,h3,p{margin:0}
   margin:0 auto;
 }
 .app.has-rail{grid-template-columns:var(--rail-icon-w) var(--main-w) var(--aside-w)}
+/* 后台只有两栏：带文字的侧栏 + 中栏。后台不渲染右栏，作者状态卡片只属于首页。 */
+.app.is-admin{grid-template-columns:var(--rail-admin-w) var(--main-w)}
 .rail-left{
   position:sticky;top:0;
   height:100vh;height:100dvh;
@@ -175,6 +179,44 @@ h1,h2,h3,p{margin:0}
   display:flex;flex-direction:column;align-items:center;
   padding-top:12px;
   border-top:1px solid var(--line);
+}
+
+/* ---------- 5.1 后台侧栏 ---------- */
+/* 与前台图标条相反：这里每一项都带文字，因为后台要“分类明确”而不是复刻前台的图标语言。
+   侧栏管模块（设置 / 评论审核 / 回到前台 / 退出登录），设置内部的四个分类由页面顶部的标签行管。 */
+.rail-admin{
+  position:sticky;top:0;
+  height:100vh;height:100dvh;
+  display:flex;flex-direction:column;justify-content:space-between;
+  gap:14px;
+  padding:16px 12px 16px;
+  border-right:1px solid var(--line);
+}
+.admin-brand{
+  display:flex;align-items:center;gap:10px;
+  width:100%;padding:6px;border-radius:14px;
+  transition:background .12s ease;
+}
+.admin-brand:hover{background:var(--hover)}
+.admin-brand-text{display:flex;flex-direction:column;min-width:0}
+.admin-brand-name{
+  font-size:15px;font-weight:800;letter-spacing:-.01em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.admin-brand-sub{color:var(--muted);font-size:12px}
+.admin-nav{display:flex;flex-direction:column;gap:2px;width:100%;flex:1 1 auto}
+.admin-nav-item{
+  display:flex;align-items:center;gap:11px;
+  width:100%;padding:10px 12px;border-radius:12px;
+  color:var(--ink);font-size:14.5px;font-weight:500;text-align:left;
+  transition:background .12s ease,color .12s ease;
+}
+.admin-nav-item:hover{background:var(--hover)}
+.admin-nav-item.on{background:var(--accent-soft);color:var(--accent);font-weight:700}
+.admin-nav-item.on .ic{stroke-width:2.2}
+.admin-foot{
+  display:flex;flex-direction:column;gap:2px;width:100%;
+  padding-top:12px;border-top:1px solid var(--line);
 }
 
 /* ---------- 6. 移动端顶栏 ---------- */
@@ -571,6 +613,9 @@ button.action:disabled{opacity:.6;cursor:default}
 
 /* ---------- 7.5 页面标题与站长审核 ---------- */
 .page-head{padding:var(--pad);border-bottom:1px solid var(--line)}
+/* 模块归属（例如“站长后台 · 设置”）写在标题之上的一行小字里：页面标题留给这一页自己的
+   名字，模块由小字和左栏同时交代，窄屏侧栏收起时也不会失去上下文。 */
+.page-kicker{margin-bottom:2px;color:var(--muted);font-size:12px;font-weight:600;letter-spacing:.02em}
 .page-title{font-size:20px;font-weight:800;letter-spacing:-.01em}
 .page-sub{margin-top:4px;color:var(--muted);font-size:13px;line-height:1.55}
 .admin-tabs{display:flex;gap:4px;padding:10px var(--pad);border-bottom:1px solid var(--line)}
@@ -648,9 +693,9 @@ button.action:disabled{opacity:.6;cursor:default}
 .toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
 
 /* ---------- 7.7 站长设置 ---------- */
+/* 每个分类各是一页，分类名已经在页面标题里，所以表单内部不再有小标题。 */
 .settings-form{padding:var(--pad);display:flex;flex-direction:column;gap:26px;max-width:560px}
 .settings-section{display:flex;flex-direction:column;gap:14px}
-.settings-title{font-size:15px;font-weight:800;letter-spacing:-.01em}
 .settings-hint{margin:0;color:var(--muted);font-size:13px;line-height:1.6}
 .settings-hint code{
   padding:1px 6px;border-radius:6px;background:var(--chip);color:var(--ink);
@@ -747,7 +792,7 @@ button.action:disabled{opacity:.6;cursor:default}
 .bottom-nav{display:none}
 
 /* ---------- 11. 断点 ---------- */
-/* 左栏在所有宽度上都是图标条，因此这里只处理右栏的收起与移动端状态卡片的接管。 */
+/* 下面三段按宽度递减排列。 */
 @media (max-width:1239px){
   /* 卡片改由 home.html 的 .status-mobile 呈现，右栏整体消失，第三道轨要一起撤掉。 */
   .app.has-rail{grid-template-columns:var(--rail-icon-w) var(--main-w)}
@@ -756,9 +801,17 @@ button.action:disabled{opacity:.6;cursor:default}
   .status-mobile{display:block;padding:14px var(--pad) 16px;border-bottom:1px solid var(--line)}
 }
 
+/* 后台侧栏 230 + 中栏 600 = 830，所以 900px 以下收起侧栏；同时把后台顶栏提前显示，
+   否则 700–899 之间后台会没有任何导航入口（顶栏本来只在 700px 以下出现）。 */
+@media (max-width:899px){
+  .app.is-admin{grid-template-columns:var(--main-w)}
+  .rail-admin{display:none}
+  .app.is-admin .topbar{display:block}
+}
+
 @media (max-width:700px){
   .app{display:block}
-  .rail-left,.rail-right{display:none}
+  .rail-left,.rail-right,.rail-admin{display:none}
   .main{min-height:0}
   .topbar{display:block}
 

@@ -97,7 +97,7 @@ func TestEveryPageCarriesOneToastSlot(t *testing.T) {
 		{"login", "/login", nil},
 		{"register", "/register", nil},
 		{"admin comments", "/admin/comments", c.cookie},
-		{"admin settings", "/admin/settings", c.cookie},
+		{"admin settings", "/admin/settings/site", c.cookie},
 	}
 	for _, page := range pages {
 		t.Run(page.name, func(t *testing.T) {
@@ -193,6 +193,7 @@ func TestSignedInPagesOfferSignOut(t *testing.T) {
 		{"owner on bookmarks", "/bookmarks", c.cookie, true, true},
 		{"owner on search", "/search?q=退出", c.cookie, true, true},
 		{"owner on admin comments", "/admin/comments", c.cookie, true, true},
+		{"owner on admin settings", "/admin/settings/ai", c.cookie, true, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -201,7 +202,9 @@ func TestSignedInPagesOfferSignOut(t *testing.T) {
 				t.Fatalf("GET %s: status = %d, want 200", tc.target, rec.Code)
 			}
 			body := rec.Body.String()
-			rail := markupBlock(t, body, `class="rail-left"`, "</aside>")
+			// The front end renders .rail-left and the back end .rail-admin; the two
+			// share the data-rail hook so this test reads whichever one the page has.
+			rail := markupBlock(t, body, `data-rail`, "</aside>")
 			bar := markupBlock(t, body, `class="tb-actions"`, "</header>")
 
 			wantEach := 0
@@ -212,7 +215,7 @@ func TestSignedInPagesOfferSignOut(t *testing.T) {
 				t.Errorf("GET %s renders %d sign-out controls, want %d", tc.target, got, 2*wantEach)
 			}
 			if got := strings.Count(rail, "data-logout"); got != wantEach {
-				t.Errorf("GET %s renders %d sign-out controls in the left rail, want %d:\n%s",
+				t.Errorf("GET %s renders %d sign-out controls in the rail, want %d:\n%s",
 					tc.target, got, wantEach, rail)
 			}
 			if got := strings.Count(bar, "data-logout"); got != wantEach {
@@ -227,6 +230,82 @@ func TestSignedInPagesOfferSignOut(t *testing.T) {
 			// which any third-party page can trigger with an image tag.
 			if strings.Contains(body, `href="/api/v1/auth/logout"`) {
 				t.Error("the sign-out control is a plain link, so a GET would end the session")
+			}
+		})
+	}
+}
+
+// TestTheTwoSurfacesKeepTheirOwnNavigation pins the boundary between the front
+// end and the back end. The back end used to render the front end's shell: the
+// same icon rail (首页/搜索/文章/摄影/收藏) and the same mobile bar, which made a
+// management page look like the feed and offered entries that mean nothing
+// there. The shell swaps one navigation for the other, and this is what keeps
+// the two from trading parts again.
+func TestTheTwoSurfacesKeepTheirOwnNavigation(t *testing.T) {
+	c := newContentFixture(t)
+	created := c.createOK(t, map[string]any{
+		"type": "moment", "status": "published", "body": "两套界面回归用例",
+	})
+	slug := created["slug"].(string)
+
+	// Entries that only mean something on the front end. The bottom bar's label
+	// is how the two mobile bars are told apart; the rail is identified by its
+	// class because both rails are asides carrying the same data-rail hook.
+	frontOnly := []string{
+		`class="rail-left"`,
+		`class="nav-item`,
+		`class="bottom-nav" aria-label="移动端导航"`,
+		`href="/search"`,
+		`href="/bookmarks"`,
+		`href="/?type=article"`,
+		`href="/?type=photo"`,
+	}
+	// Entries that only mean something in the back end.
+	backOnly := []string{
+		`class="rail-admin"`,
+		`class="app is-admin"`,
+		`class="bottom-nav" aria-label="后台导航"`,
+		`class="admin-nav-item`,
+	}
+
+	back := []string{"/admin/comments", "/admin/settings/site", "/admin/settings/ai"}
+	for _, target := range back {
+		t.Run("back end"+target, func(t *testing.T) {
+			body := c.do(t, http.MethodGet, target, "", nil, c.cookie).Body.String()
+			for _, marker := range backOnly {
+				if !strings.Contains(body, marker) {
+					t.Errorf("GET %s is missing %s", target, marker)
+				}
+			}
+			for _, marker := range frontOnly {
+				if strings.Contains(body, marker) {
+					t.Errorf("GET %s renders %s, which belongs to the front end", target, marker)
+				}
+			}
+			// The right rail is the author status card's column, and that card
+			// exists on the feed only.
+			if strings.Contains(body, `class="rail-right"`) {
+				t.Errorf("GET %s renders the feed's right rail", target)
+			}
+		})
+	}
+
+	front := []string{"/", "/p/" + slug, "/search?q=两套"}
+	for _, target := range front {
+		t.Run("front end"+target, func(t *testing.T) {
+			body := c.do(t, http.MethodGet, target, "", nil, nil).Body.String()
+			for _, marker := range []string{
+				`class="rail-left"`,
+				`class="bottom-nav" aria-label="移动端导航"`,
+			} {
+				if !strings.Contains(body, marker) {
+					t.Errorf("GET %s is missing %s", target, marker)
+				}
+			}
+			for _, marker := range backOnly {
+				if strings.Contains(body, marker) {
+					t.Errorf("GET %s renders %s, which belongs to the back end", target, marker)
+				}
 			}
 		})
 	}

@@ -113,10 +113,40 @@
   </symbol>
 </svg>
 
-<div class="app{{if .AIStatus.Text}} has-rail{{end}}">
+<div class="app{{if .Admin}} is-admin{{else if .AIStatus.Text}} has-rail{{end}}">
 
+  {{if .Admin}}
+  <!-- ========== 后台侧栏 ========== -->
+  <!-- 后台不沿用前台的图标条：首页/搜索/文章/摄影/收藏在管理页里没有意义，沿用还会让两套界面
+       长得一模一样。侧栏带文字，模块一眼可见；设置内部的分类在页面顶部那一排标签里。 -->
+  <aside class="rail-admin" data-rail>
+    <a class="admin-brand" href="/admin" title="站长后台">
+      <span class="brandmark" aria-hidden="true"><svg class="ic ic-logo" viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
+      <span class="admin-brand-text">
+        <span class="admin-brand-name">{{.SiteName}}</span>
+        <span class="admin-brand-sub">站长后台</span>
+      </span>
+    </a>
+    <nav class="admin-nav" aria-label="后台导航">
+      <a class="admin-nav-item{{if eq .Admin "settings"}} on{{end}}" href="/admin/settings"{{if eq .Admin "settings"}} aria-current="page"{{end}}>
+        <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-settings"/></svg><span>设置</span>
+      </a>
+      <a class="admin-nav-item{{if eq .Admin "comments"}} on{{end}}" href="/admin/comments"{{if eq .Admin "comments"}} aria-current="page"{{end}}>
+        <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-comment"/></svg><span>评论审核</span>
+      </a>
+    </nav>
+    <div class="admin-foot">
+      <a class="admin-nav-item" href="/">
+        <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-home"/></svg><span>回到前台</span>
+      </a>
+      <button class="admin-nav-item" type="button" data-logout>
+        <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-logout"/></svg><span>退出登录</span>
+      </button>
+    </div>
+  </aside>
+  {{else}}
   <!-- ========== 左栏 ========== -->
-  <aside class="rail-left">
+  <aside class="rail-left" data-rail>
     <div class="rail-top">
       <a class="brand" href="/" aria-label="{{.SiteName}} 首页">
         <span class="brandmark" aria-hidden="true"><svg class="ic ic-logo" viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
@@ -164,6 +194,7 @@
     </div>
     {{end}}
   </aside>
+  {{end}}
 
   <!-- ========== 中栏 ========== -->
   <main class="main">
@@ -215,6 +246,21 @@
 
 
 <!-- ========== 移动端固定底部导航 ========== -->
+{{if .Admin}}
+<!-- 后台用自己的三条：前台那五个条目（首页/搜索/文章/摄影/收藏）与管理页无关，沿用等于把
+     前台导航搬进后台。退出登录不在这里重复，顶栏已经有一个（两个入口是同一段行为的两处落点）。 -->
+<nav class="bottom-nav" aria-label="后台导航">
+  <a class="{{if eq .Admin "settings"}}on{{end}}" href="/admin/settings"{{if eq .Admin "settings"}} aria-current="page"{{end}}>
+    <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-settings"/></svg><span>设置</span>
+  </a>
+  <a class="{{if eq .Admin "comments"}}on{{end}}" href="/admin/comments"{{if eq .Admin "comments"}} aria-current="page"{{end}}>
+    <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-comment"/></svg><span>评论</span>
+  </a>
+  <a href="/">
+    <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-home"/></svg><span>回到前台</span>
+  </a>
+</nav>
+{{else}}
 <!-- 顺序与左栏图标条一致，搜索入口与左栏同样是 /search。 -->
 <nav class="bottom-nav" aria-label="移动端导航">
   <a class="{{if eq .Filter ""}}on{{end}}" href="/"{{if eq .Filter ""}} aria-current="page"{{end}}>
@@ -236,6 +282,7 @@
     <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-login"/></svg><span>我的</span>
   </a>
 </nav>
+{{end}}
 
 <!-- ========== 全局提示条 ========== -->
 <!-- 提示条是 position:fixed 的浮层，与具体页面无关，因此放在骨架里只声明一次：

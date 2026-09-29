@@ -1,15 +1,43 @@
-{{define "title"}}站长设置 · {{.SiteName}}{{end}}
+{{define "title"}}站长设置 · {{.Section.Label}} · {{.SiteName}}{{end}}
 {{define "content"}}
-    <h1 class="sr-only">站长设置</h1>
+    <h1 class="sr-only">{{.Section.Label}}设置</h1>
 
+    <!-- 标题说的是**这一页**的分类，模块（设置）在头上那行小字与左栏里。四个分类是四张
+         独立的表单（各带自己的保存按钮），不是同一条表单的四种状态，所以每页都要能自己
+         报名；命名方式与「保存{分类}设置」的按钮、浏览器标题一致。 -->
     <header class="page-head">
-      <h2 class="page-title">站长设置</h2>
-      <p class="page-sub">保存后立刻生效。上传目录、单文件大小和允许的图片类型只能通过环境变量配置，不在本页；密钥只会加密保存，任何页面都不会回显。</p>
+      <p class="page-kicker">站长后台 · 设置</p>
+      <h2 class="page-title">{{.Section.Label}}设置</h2>
+      <p class="page-sub">{{.Section.Hint}}</p>
     </header>
 
+    <!-- 分类是分开的页面而不是一页里的几段：每页一个表单，提交时只有这一页的字段进 PATCH 体。
+         标签行是分类导航，侧栏只负责模块，两者不重复。 -->
+    <nav class="admin-tabs" aria-label="设置分类">
+      {{range .Tabs}}
+      <a class="admin-tab{{if .Active}} on{{end}}" href="{{.URL}}"{{if .Active}} aria-current="page"{{end}}>{{.Label}}</a>
+      {{end}}
+    </nav>
+
     <form class="settings-form" data-settings-form data-settings-action="/api/v1/admin/settings">
+      {{if eq .Section.Key "site"}}{{template "settingsSite" .}}{{end}}
+      {{if eq .Section.Key "registration"}}{{template "settingsRegistration" .}}{{end}}
+      {{if eq .Section.Key "github"}}{{template "settingsGithub" .}}{{end}}
+      {{if eq .Section.Key "ai"}}{{template "settingsAI" .}}{{end}}
+
+      {{if and .Section.Secrets (not .Settings.MasterKey)}}
+      <p class="settings-warning" role="alert">未配置 BOOP_MASTER_KEY：密钥字段无法保存（清除已保存的密钥仍可用）；站点也会隐藏 GitHub 登录入口。</p>
+      {{end}}
+      <p class="auth-error" role="alert" data-settings-error hidden></p>
+      <button class="auth-submit" type="submit" data-settings-submit>保存{{.Section.Label}}设置</button>
+      <noscript><p class="auth-note">保存设置需要 JavaScript：本页会把改动以 JSON PATCH 到 /api/v1/admin/settings。</p></noscript>
+    </form>
+{{end}}
+
+<!-- ========== 共享模板：设置的四个分类（各一页，互不重复字段） ========== -->
+
+{{define "settingsSite"}}
       <section class="settings-section">
-        <h3 class="settings-title">站点</h3>
         <label class="auth-field">
           <span>站点名称</span>
           <input name="site_name" type="text" required maxlength="80" value="{{.Settings.SiteName}}">
@@ -38,9 +66,10 @@
           <input name="page_size" type="number" min="1" max="50" required value="{{.Settings.PageSize}}">
         </label>
       </section>
+{{end}}
 
+{{define "settingsRegistration"}}
       <section class="settings-section">
-        <h3 class="settings-title">注册与评论</h3>
         <label class="settings-switch">
           <input name="registration_enabled" type="checkbox"{{if .Settings.RegistrationEnabled}} checked{{end}}>
           <span>允许公开注册（关闭后已有账号仍可登录，包括 GitHub 绑定的账号）</span>
@@ -54,9 +83,10 @@
           <span>读者评论需要审核</span>
         </label>
       </section>
+{{end}}
 
+{{define "settingsGithub"}}
       <section class="settings-section">
-        <h3 class="settings-title">GitHub 登录</h3>
         <p class="settings-hint">在 GitHub OAuth App 里把回调地址填成 <code>{{.BaseURL}}/auth/github/callback</code>。</p>
         <label class="auth-field">
           <span>Client ID</span>
@@ -77,9 +107,10 @@
           <span>清除已保存的 Client Secret</span>
         </label>
       </section>
+{{end}}
 
+{{define "settingsAI"}}
       <section class="settings-section">
-        <h3 class="settings-title">AI</h3>
         <p class="settings-hint">OpenAI-compatible 服务：Base URL 例如 <code>https://api.openai.com/v1</code>。作者状态与写作助手在配置完成后生效。</p>
         <label class="settings-switch">
           <input name="ai_enabled" type="checkbox"{{if .Settings.AIEnabled}} checked{{end}}>
@@ -112,12 +143,4 @@
           <span>清除已保存的 API Key</span>
         </label>
       </section>
-
-      {{if not .Settings.MasterKey}}
-      <p class="settings-warning" role="alert">未配置 BOOP_MASTER_KEY：密钥字段无法保存（清除已保存的密钥仍可用）；站点也会隐藏 GitHub 登录入口。</p>
-      {{end}}
-      <p class="auth-error" role="alert" data-settings-error hidden></p>
-      <button class="auth-submit" type="submit" data-settings-submit>保存设置</button>
-      <noscript><p class="auth-note">保存设置需要 JavaScript：本页会把改动以 JSON PATCH 到 /api/v1/admin/settings。</p></noscript>
-    </form>
 {{end}}

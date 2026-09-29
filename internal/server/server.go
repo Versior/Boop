@@ -132,7 +132,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("/sitemap.xml", s.handleSEOMethodFallback)
 	mux.HandleFunc("GET /bookmarks", s.handleBookmarksPage)
 	mux.HandleFunc("GET /admin", s.handleAdminIndex)
-	mux.HandleFunc("GET /admin/settings", s.handleAdminSettingsPage)
+	mux.HandleFunc("GET /admin/settings", s.handleAdminSettingsIndex)
+	mux.HandleFunc("GET /admin/settings/{section}", s.handleAdminSettingsPage)
 	mux.HandleFunc("GET /admin/comments", s.handleAdminCommentsPage)
 	mux.HandleFunc("GET /auth/github/start", s.handleGitHubStart)
 	mux.HandleFunc("GET /auth/github/callback", s.handleGitHubCallback)
@@ -198,6 +199,10 @@ type pageView struct {
 	// Owner is true for the signed-in owner, so the shell can offer the
 	// moderation entry without every page computing it.
 	Owner bool
+	// Admin names the back-end category this page belongs to and stays empty on
+	// every front-end page. The shell renders the back-end navigation instead of
+	// the front-end one when it is set, so the two surfaces never mix.
+	Admin string
 	// SignedIn is true for any signed-in account, owner or reader. The shell
 	// needs it for the entries every session gets - signing out - while Owner
 	// stays the narrower flag for the owner-only ones. Deriving it from
@@ -253,6 +258,16 @@ func (s *server) shellViewWithSettings(r *http.Request, filter string, values se
 		view.SignedIn = true
 		view.Owner = state.user.IsOwner()
 	}
+	return view
+}
+
+// adminShellView is the shell of an owner-only page. The back end deliberately
+// does not reuse the front-end navigation: 首页/搜索/文章/摄影 mean nothing in a
+// management page, and showing them would make the two surfaces look identical.
+// The shell swaps one navigation for the other instead of rendering both.
+func (s *server) adminShellView(r *http.Request, section string) pageView {
+	view := s.shellView(r, navNeutralFilter)
+	view.Admin = section
 	return view
 }
 
