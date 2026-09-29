@@ -147,13 +147,20 @@ GitHub 登录规则：
 | 方法 | 路径 | 输入/说明 |
 |---|---|---|
 | POST | `/api/v1/admin/posts` | type,status,title,body,excerpt,asset_ids,tags,location,captured_at |
-| PATCH | `/api/v1/admin/posts/{id}` | 上述字段的部分更新，带 `updated_at` 乐观锁 |
+| PATCH | `/api/v1/admin/posts/{id}` | 上述字段的部分更新；**`updated_at` 是必填**，见下 |
 | DELETE | `/api/v1/admin/posts/{id}` | 软删除 |
 | POST | `/api/v1/admin/uploads` | multipart 单文件，字段名 `file`；jpg/png/webp/gif，默认最大 10MB |
 | GET | `/api/v1/admin/comments?status=pending` | 审核队列；`status` 为 pending/approved/rejected，默认 pending，`limit` 默认 20、最大 50 |
 | POST | `/api/v1/admin/comments/{id}/approve` | 批准；重复调用幂等，未知或已删除评论 404 |
 | POST | `/api/v1/admin/comments/{id}/reject` | 拒绝；幂等同上 |
 | DELETE | `/api/v1/admin/comments/{id}` | 管理删除（软删除）；重复删除 404 |
+
+内容写入规则（`PATCH /api/v1/admin/posts/{id}`）：
+
+- **`updated_at` 是必填字段**，它同时是乐观锁的版本号。缺字段、或值不能按 `RFC3339Nano` 解析（即 `RFC3339` 再加可选的纳秒小数部分，也就是响应里给出的那种形态），都返回 400 `invalid_updated_at`（消息为「缺少或错误的 updated_at」）；不存在「不带版本号就无条件覆盖」的写法。比较是**字符串精确相等**，所以要把服务端给的值原样回传。
+- 带了但已过期（该行在这之后被改过）返回 409 `conflict`，应重新读取内容、拿新的 `updated_at` 再重试。
+- 成功响应的 `updated_at` 是这次写入产生的新版本号，下一次 `PATCH` 用它，不要沿用请求里那一个。`published_at` 不受影响：它只在第一次转为已发布时写入，之后冻结，所以编辑不会移动内容在信息流里的位置。
+- 判定顺序是：先解析 `updated_at`（400）→ 再查行（未知或已软删除为 404 `not_found`）→ 再合并并做字段校验（如「只有文章可以设置标题」→ 400 `invalid_title`）→ 最后做乐观锁比较（409）。因此一次「既写了当前类型不允许的字段、又带了过期时间戳」的请求得到 400 而不是 409。
 
 上传与图片服务：
 
