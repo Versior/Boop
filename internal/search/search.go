@@ -124,10 +124,15 @@ func Search(ctx context.Context, db *sql.DB, opts Options) (*Page, error) {
 	if cursorID > 0 {
 		// The documented feed cursor: matching results are ordered by the same
 		// columns as the public feed, so pagination cannot skip or repeat a row.
-		query += ` AND (COALESCE(p.published_at, '') < ? OR (COALESCE(p.published_at, '') = ? AND p.id < ?))`
+		query += ` AND (p.published_at < ? OR (p.published_at = ? AND p.id < ?))`
 		args = append(args, cursorTime, cursorTime, cursorID)
 	}
-	query += ` ORDER BY COALESCE(p.published_at, '') DESC, p.id DESC LIMIT ?`
+	// Ordering and the cursor read the bare column, exactly like content.Feed and
+	// the RSS query: docs/DATABASE.md records the time invariant that a
+	// status='published' row always carries a non-empty published_at, so no
+	// COALESCE guard is needed. The select list keeps its COALESCE because it
+	// pins the JSON shape for draft rows, and feed.go does the same.
+	query += ` ORDER BY p.published_at DESC, p.id DESC LIMIT ?`
 	// One extra row tells us whether another page exists without a count query.
 	args = append(args, limit+1)
 
