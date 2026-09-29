@@ -125,6 +125,14 @@
         </button>
       </nav>
     </div>
+    {{if .Owner}}
+    <!-- 后台入口固定在图标条底部，和主导航分开；游客与读者拿不到只能得到 403 的链接。 -->
+    <div class="rail-foot">
+      <a class="nav-item" href="/admin" title="站长后台">
+        <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-settings"/></svg><span class="label">站长后台</span>
+      </a>
+    </div>
+    {{end}}
   </aside>
 
   <!-- ========== 中栏 ========== -->

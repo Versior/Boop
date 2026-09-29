@@ -177,7 +177,7 @@ AI 接口规则：
 - `GET /login`、`GET /register`。
 - `GET /bookmarks` 登录用户收藏；游客重定向到 `/login`。
 - `GET /login` 与 `GET /register` 在 GitHub 客户端 ID 与 Secret **都能解密且非空**时显示同一个 `/auth/github/start` 登录入口（注册页在关闭公开注册后仍然显示，供已绑定的账号登录）；未配置 `BOOP_MASTER_KEY`、缺少任一半或密文损坏（换了主密钥）时隐藏入口并写脱敏告警，`/auth/github/start` 也随之安全失败，不会发出任何 Session。该判断每次都实际解密，不做缓存。
-- `GET /admin` 站长管理入口，303 跳转到 `/admin/settings`；游客重定向到 `/login`，普通读者得到 403 HTML 页。
+- `GET /admin` 站长管理入口，303 跳转到 `/admin/settings`；游客重定向到 `/login`，普通读者得到 403 HTML 页。左栏底部对站长渲染一个指向 `/admin` 的齿轮入口，游客与读者的页面里没有这段 DOM；移动端顶栏用同样只对站长可见的图标按钮承担同一入口。
 - `GET /admin/comments`、`GET /admin/settings` 站长页面；两者的游客都重定向到 `/login`，普通读者得到 403 HTML 页。
 - 未知页面返回带 request_id 的统一 404；API 永远不返回 HTML 错误页。
 

@@ -552,6 +552,54 @@ func TestConfiguredAvatarRendersOnEveryContentSurface(t *testing.T) {
 	}
 }
 
+// TestLeftRailAdminEntryIsOwnerOnly pins the permanent way into the admin pages:
+// the rail owns a gear at its foot, so the owner does not have to remember a URL.
+// A guest or a reader must not be handed a link that could only answer 403.
+func TestLeftRailAdminEntryIsOwnerOnly(t *testing.T) {
+	f := newSettingsFixture(t)
+	owner := f.bootstrapOwner(t, "owner@example.com", "遇事开心")
+	ownerCookie := sessionCookie(t, f.login(t, owner.Email, authPassword, nil))
+	readerCookie := sessionCookie(t, f.register(t, "reader@example.com", "读者甲"))
+
+	const marker = `class="rail-foot"`
+
+	rec := f.do(t, http.MethodGet, "/", "", nil, ownerCookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("owner home: status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, marker) {
+		t.Fatal("the owner's page has no rail foot")
+	}
+	foot := body[strings.Index(body, marker):]
+	// Only the rail foot matters here: the topbar carries its own owner-only
+	// admin buttons, and that is a different surface with its own test.
+	if end := strings.Index(foot, "</aside>"); end >= 0 {
+		foot = foot[:end]
+	}
+	if !strings.Contains(foot, `href="/admin"`) {
+		t.Errorf("the rail foot does not link into the admin pages: %s", foot)
+	}
+
+	for _, tt := range []struct {
+		name   string
+		cookie *http.Cookie
+	}{
+		{"guest", nil},
+		{"reader", readerCookie},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := f.do(t, http.MethodGet, "/", "", nil, tt.cookie)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if strings.Contains(rec.Body.String(), marker) {
+				t.Error("the rail foot is rendered for a visitor who cannot use it")
+			}
+		})
+	}
+}
+
 func TestAdminSettingsPageAndIndex(t *testing.T) {
 	f := newSettingsFixture(t)
 	owner := f.bootstrapOwner(t, "owner@example.com", "遇事开心")

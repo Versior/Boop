@@ -163,6 +163,16 @@ h1,h2,h3,p{margin:0}
 .nav-item.on{font-weight:700}
 .nav-item.on .ic{stroke-width:2.2}
 
+/* 站长后台入口：由 .rail-left 的 space-between 顶到底部，横线把两段图标分开。
+   只在站长登录时渲染；图标条隐藏的是 .label，所以文字仍在无障碍树里，
+   读屏播报“站长后台”，也不再有可见文字需要额外 aria-label。 */
+.rail-foot{
+  width:100%;
+  display:flex;flex-direction:column;align-items:center;
+  padding-top:12px;
+  border-top:1px solid var(--line);
+}
+
 /* ---------- 6. 移动端顶栏 ---------- */
 .icon-btn{
   display:grid;place-items:center;
