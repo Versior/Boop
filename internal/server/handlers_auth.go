@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"boop/internal/auth"
@@ -32,7 +33,44 @@ const (
 	// sign-in: unknown email, wrong password and disabled account are
 	// indistinguishable to the caller.
 	invalidCredentialsMessage = "邮箱或密码不正确"
+
+	// sessionSweepInterval bounds how often the expired-session cleanup runs.
+	// Sign-in is the only event that creates a session, so it is also the only
+	// moment rows can start piling up; an instance that is never signed into has
+	// nothing to sweep. An hour keeps the amortised cost to one indexed DELETE
+	// per hour at the very most, on the single connection every statement shares.
+	sessionSweepInterval = time.Hour
 )
+
+// sessionSweep decides when the expired-session cleanup runs. It exists so the
+// cleanup is amortised over sign-ins rather than scheduled: a timer would be a
+// second concurrency model to reason about, and this is two words behind a
+// mutex. The clock is a field so tests do not need the wall clock.
+type sessionSweep struct {
+	mu   sync.Mutex
+	last time.Time
+	ran  bool
+	now  func() time.Time
+}
+
+func newSessionSweep(now func() time.Time) *sessionSweep {
+	return &sessionSweep{now: now}
+}
+
+// due reports whether the sweep should run now, claiming the slot when it
+// should. Claiming happens before the work, so two concurrent sign-ins can
+// never both sweep.
+func (s *sessionSweep) due() (time.Time, bool) {
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ran && now.Sub(s.last) < sessionSweepInterval {
+		return time.Time{}, false
+	}
+	s.ran = true
+	s.last = now
+	return now, true
+}
 
 // authState is the request-scoped result of session resolution.
 type authState struct {
@@ -367,15 +405,45 @@ func (s *server) startSession(w http.ResponseWriter, r *http.Request, user auth.
 }
 
 // newSession replaces any session presented by this request with a fresh one.
-// Every sign-in rotates, so a fixated cookie cannot survive it.
+// Every sign-in rotates, so a fixated cookie cannot survive it. This is also
+// where the expired-session cleanup is triggered, because creating a session is
+// the only thing that can ever make one stale.
 func (s *server) newSession(r *http.Request, user auth.User) (auth.Session, error) {
-	return auth.RotateSession(r.Context(), s.db, sessionTokenFrom(r), auth.NewSession{
+	session, err := auth.RotateSession(r.Context(), s.db, sessionTokenFrom(r), auth.NewSession{
 		UserID:    user.ID,
 		Now:       time.Now(),
 		TTL:       auth.DefaultSessionTTL,
 		UserAgent: r.UserAgent(),
 		IPPrefix:  ipPrefix(r.RemoteAddr),
 	})
+	if err != nil {
+		return auth.Session{}, err
+	}
+	s.sweepExpiredSessions(r)
+	return session, nil
+}
+
+// sweepExpiredSessions deletes stale session rows when the interval has passed.
+// Losing the cleanup must never block a valid sign-in, so a failure is logged
+// and swallowed: the next sign-in after the interval tries again.
+func (s *server) sweepExpiredSessions(r *http.Request) {
+	if s.sessionSweep == nil {
+		return
+	}
+	now, ok := s.sessionSweep.due()
+	if !ok {
+		return
+	}
+	removed, err := auth.SweepExpiredSessions(r.Context(), s.db, now)
+	if err != nil {
+		s.logger.LogAttrs(r.Context(), slog.LevelWarn, "could not sweep expired sessions",
+			slog.String("error", err.Error()), slog.String("request_id", requestIDFrom(r.Context())))
+		return
+	}
+	if removed > 0 {
+		s.logger.LogAttrs(r.Context(), slog.LevelInfo, "swept expired sessions",
+			slog.Int64("removed", removed), slog.String("request_id", requestIDFrom(r.Context())))
+	}
 }
 
 // handleLogoutAPI deletes the current session. Signing out twice is harmless.

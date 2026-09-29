@@ -538,6 +538,62 @@ func TestDeleteSessionIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestSweepExpiredSessionsRemovesOnlyStaleRows covers the cleanup sign-in
+// amortises. Three sessions are created around the sweep instant: the live one
+// must survive, the long-expired one and the one expiring exactly now must go
+// (LookupSession rejects a row once !now.Before(expiresAt), so the boundary row
+// is already unusable and keeping it would leak a row per sign-in).
+func TestSweepExpiredSessionsRemovesOnlyStaleRows(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	user := newReader(t, db, "alice@example.com", "阿丽丝")
+
+	live, err := CreateSession(ctx, db, NewSession{UserID: user.ID, Now: now, TTL: 24 * time.Hour})
+	if err != nil {
+		t.Fatalf("CreateSession(live): %v", err)
+	}
+	expired, err := CreateSession(ctx, db, NewSession{UserID: user.ID, Now: now.Add(-48 * time.Hour), TTL: time.Hour})
+	if err != nil {
+		t.Fatalf("CreateSession(expired): %v", err)
+	}
+	boundary, err := CreateSession(ctx, db, NewSession{UserID: user.ID, Now: now.Add(-time.Hour), TTL: time.Hour})
+	if err != nil {
+		t.Fatalf("CreateSession(boundary): %v", err)
+	}
+
+	removed, err := SweepExpiredSessions(ctx, db, now)
+	if err != nil {
+		t.Fatalf("SweepExpiredSessions: %v", err)
+	}
+	if removed != 2 {
+		t.Errorf("removed = %d, want 2", removed)
+	}
+
+	if _, _, err := LookupSession(ctx, db, live.Token, now); err != nil {
+		t.Errorf("the live session did not survive the sweep: %v", err)
+	}
+	for name, token := range map[string]string{"expired": expired.Token, "boundary": boundary.Token} {
+		// The row is gone, so the token is unknown rather than expired.
+		if _, _, err := LookupSession(ctx, db, token, now); !errors.Is(err, ErrSessionInvalid) {
+			t.Errorf("%s session: error = %v, want ErrSessionInvalid", name, err)
+		}
+	}
+
+	// Running it again removes nothing: the sweep converges.
+	removed, err = SweepExpiredSessions(ctx, db, now)
+	if err != nil {
+		t.Fatalf("second SweepExpiredSessions: %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("second sweep removed = %d, want 0", removed)
+	}
+
+	if _, err := SweepExpiredSessions(ctx, nil, now); err == nil {
+		t.Error("SweepExpiredSessions(nil) succeeded, want an error")
+	}
+}
+
 // TestCSRFTokenIsDerivedFromTheSession documents that the CSRF token is
 // recomputable from the session, so GET /api/v1/auth/me can return it without
 // storing plaintext.

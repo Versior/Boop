@@ -180,6 +180,7 @@ CREATE VIRTUAL TABLE post_search USING fts5(
 - `cover_asset_id` 在迁移 002 中通过触发器或应用事务校验属于当前文章，不建立会造成建表顺序循环的外键。
 - 点赞、收藏使用 `INSERT ... ON CONFLICT DO NOTHING` 与 `DELETE`，响应返回最终状态和计数。收藏是私有的：返回的计数是当前用户自己的收藏总数。
 - 每个内容读取都要解析点赞数，走的是 `SELECT COUNT(*) FROM likes WHERE post_id = ?`（`internal/content/postColumns`）。`likes` 的主键是 `(user_id, post_id)`，`post_id` 没有前导索引，因此该计数原本是全表扫描；连接池又被钉在 `maxOpenConns = 1`，所以一页 N 条内容就是在唯一连接上串行扫 N 次，代价随点赞量线性增长。`idx_likes_post`（迁移 004）把它变成覆盖索引查找，`internal/store/store_test.go` 用 `EXPLAIN QUERY PLAN` 钉住计划（并用 `NOT INDEXED` 证明该断言非空转）。反方向（按 `user_id` 查自己的点赞）已由主键覆盖，不再单独建索引。
+- 过期 session 由登录时摊销的清扫删除（`auth.SweepExpiredSessions`，由 `server.newSession` 按 `sessionSweepInterval` 约每小时最多触发一次）：`DELETE FROM sessions WHERE expires_at <= ?` 走 `idx_sessions_expires`。挂在登录上而不是开定时器，是因为只有登录会新增 session 行——没人登录的实例也没有可清的垃圾，这样进程里仍然只有一种并发模型（没有脱离请求的后台写库）。比较直接作用于文本列：`timestamp()` 写的是无小数秒的 UTC RFC3339 定宽字符串，字典序即时间序。此前只有 `LookupSession` 会删过期行，而且只删当前 cookie 那一行，浏览器不再回来就留下一行，于是表随登录次数单调增长。
 - 删除或拒绝父评论后，其回复仍是 `approved` 数据，但公开列表不会展示孤儿回复（写作时判定的可见性以父评论为准）。
 - FTS 索引由 posts 的 insert/update/delete 触发器同步；软删除内容不得进入搜索结果。
 - 搜索只**读** `post_search` 与 `posts`，不新增表、不新增迁移：`status='published' AND deleted_at IS NULL` 的过滤在 SQL 里完成（索引里保留草稿与软删除行，以便恢复后重新可见），`snippet()` 的列参数为 `-1`（取匹配最佳的那一列：标题、正文或摘要，因此只在标题/摘要命中的结果也能看到高亮），`bm25()` 只作为结果里的内部字段，排序恒为 `published_at DESC, id DESC`（与 `content.Feed`、RSS 一致：直接读裸列，依据上面的发布时间不变量，不套 `COALESCE`；SELECT 列表里的 `COALESCE` 只用于固定 JSON 形态，不参与排序与游标），游标沿用公共信息流的 `<published_at,id>`，命中的行与索引列一一对应，不会因为评分造成漏行或重复。

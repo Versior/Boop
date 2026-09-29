@@ -46,6 +46,10 @@ type server struct {
 	// point the flow at a local server.
 	github      auth.GitHubAPI
 	oauthStates *oauthStates
+	// sessionSweep amortises the expired-session cleanup over sign-ins. It is a
+	// struct rather than a timer so the process keeps exactly one concurrency
+	// model: no goroutine writes to the database behind a request's back.
+	sessionSweep *sessionSweep
 	// aiRefresh is the process-local single-flight guard of the author status
 	// refresh, so concurrent home visits never duplicate generation.
 	aiRefresh ai.Guard
@@ -76,14 +80,15 @@ func newServer(cfg config.Config, db *sql.DB, logger *slog.Logger) (*server, err
 		}
 	}
 	return &server{
-		cfg:         cfg,
-		db:          db,
-		logger:      logger,
-		pages:       pages,
-		limiters:    newLimiters(time.Now),
-		secrets:     box,
-		github:      auth.NewGitHubAPI(nil),
-		oauthStates: newOAuthStates(time.Now),
+		cfg:          cfg,
+		db:           db,
+		logger:       logger,
+		pages:        pages,
+		limiters:     newLimiters(time.Now),
+		secrets:      box,
+		github:       auth.NewGitHubAPI(nil),
+		oauthStates:  newOAuthStates(time.Now),
+		sessionSweep: newSessionSweep(time.Now),
 	}, nil
 }
 

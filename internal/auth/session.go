@@ -255,6 +255,38 @@ func DeleteSession(ctx context.Context, db *sql.DB, token string) error {
 	return nil
 }
 
+// SweepExpiredSessions deletes every session past its expires_at and reports how
+// many rows went away.
+//
+// Only LookupSession used to remove expired rows, and only for the cookie being
+// presented, so a browser that never came back left its row behind forever and
+// the table grew with every sign-in. The caller amortises this sweep over
+// sign-ins (see server.newSession) instead of scheduling it: sessions are only
+// ever added by a sign-in, so an instance nobody signs into has nothing to
+// clean, and a busy one pays for at most one indexed DELETE per interval.
+//
+// The comparison is on the stored text. timestamp() writes RFC3339 in UTC with
+// no fractional seconds, so every row is a fixed-width "2006-01-02T15:04:05Z"
+// string and lexicographic order is chronological order; idx_sessions_expires
+// serves the range. A row whose expires_at an older build wrote in another form
+// simply falls outside the range and is left for LookupSession to reject.
+func SweepExpiredSessions(ctx context.Context, db *sql.DB, now time.Time) (int64, error) {
+	if db == nil {
+		return 0, errors.New("auth: sweep sessions: nil database")
+	}
+	result, err := db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at <= ?`, timestamp(now))
+	if err != nil {
+		return 0, fmt.Errorf("auth: sweep sessions: %w", err)
+	}
+	removed, err := result.RowsAffected()
+	if err != nil {
+		// The rows are gone; only the count is unknown, which is not worth
+		// failing a sign-in over.
+		return 0, nil
+	}
+	return removed, nil
+}
+
 // VerifyCSRF compares a presented token with the session's derived CSRF token
 // in constant time.
 func VerifyCSRF(session Session, candidate string) bool {

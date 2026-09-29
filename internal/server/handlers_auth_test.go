@@ -183,6 +183,59 @@ func (f *authFixture) bootstrapOwner(t *testing.T, email, name string) auth.User
 	return owner
 }
 
+// TestSignInAmortisesTheExpiredSessionSweep wires the cleanup to the only event
+// that can create stale rows. Sign-in is the trigger instead of a timer, so the
+// assertions here are: the first sign-in sweeps, a second one inside the
+// interval does not, and one past the interval does again. The clock is
+// injected once, so the test never sleeps.
+func TestSignInAmortisesTheExpiredSessionSweep(t *testing.T) {
+	f := newAuthFixture(t)
+	ctx := context.Background()
+	owner := f.bootstrapOwner(t, "owner@example.com", "站长")
+
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	f.srv.sessionSweep = newSessionSweep(func() time.Time { return now })
+
+	seedStale := func(label string) {
+		t.Helper()
+		if _, err := f.db.ExecContext(ctx,
+			`INSERT INTO sessions(user_id, token_hash, csrf_token_hash, expires_at, created_at, last_seen_at)
+			 VALUES(?, ?, ?, ?, ?, ?)`,
+			owner.ID, []byte(label+"-hash"), []byte(label+"-csrf"),
+			now.Add(-48*time.Hour).Format(time.RFC3339),
+			now.Add(-72*time.Hour).Format(time.RFC3339),
+			now.Add(-72*time.Hour).Format(time.RFC3339)); err != nil {
+			t.Fatalf("seed stale session %s: %v", label, err)
+		}
+	}
+	// Sessions created through a real sign-in expire 30 days from the real wall
+	// clock, which is far past the injected instant, so they always survive.
+	signIn := func() {
+		t.Helper()
+		if rec := f.login(t, "owner@example.com", authPassword, nil); rec.Code != http.StatusOK {
+			t.Fatalf("login status = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+	}
+
+	seedStale("stale")
+	signIn()
+	if got := f.countRows(t, "sessions"); got != 1 {
+		t.Errorf("sessions after the first sign-in = %d, want 1 (stale row swept, new row kept)", got)
+	}
+
+	seedStale("stale-within-interval")
+	signIn()
+	if got := f.countRows(t, "sessions"); got != 3 {
+		t.Errorf("sessions after a sign-in inside the interval = %d, want 3 (no second sweep, so the stale row is still there)", got)
+	}
+
+	now = now.Add(2 * sessionSweepInterval)
+	signIn()
+	if got := f.countRows(t, "sessions"); got != 3 {
+		t.Errorf("sessions after a sign-in past the interval = %d, want 3 (stale row swept, new row kept)", got)
+	}
+}
+
 func TestRegisterCreatesReaderSessionAndCookie(t *testing.T) {
 	f := newAuthFixture(t)
 	rec := f.register(t, " Reader@Example.com ", " 读者甲 ")
