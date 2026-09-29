@@ -138,12 +138,16 @@ func TestMatchExpressionQuotesTermsAndDropsSyntax(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			expression, searchable, err := matchExpression(tc.query)
+			terms, searchable, err := queryTerms(tc.query)
 			if err != nil {
-				t.Fatalf("matchExpression(%q): %v", tc.query, err)
+				t.Fatalf("queryTerms(%q): %v", tc.query, err)
 			}
 			if searchable != tc.searchable {
 				t.Fatalf("searchable = %v, want %v", searchable, tc.searchable)
+			}
+			expression := ""
+			if searchable {
+				expression = matchExpression(terms)
 			}
 			if expression != tc.want {
 				t.Errorf("expression = %q, want %q", expression, tc.want)
@@ -154,12 +158,31 @@ func TestMatchExpressionQuotesTermsAndDropsSyntax(t *testing.T) {
 
 func TestMatchExpressionRejectsOverlongQueries(t *testing.T) {
 	atLimit := strings.Repeat("字", MaxQueryRunes)
-	if _, searchable, err := matchExpression(atLimit); err != nil || !searchable {
+	if _, searchable, err := queryTerms(atLimit); err != nil || !searchable {
 		t.Fatalf("query at the limit: searchable = %v, err = %v", searchable, err)
 	}
 
-	_, _, err := matchExpression(strings.Repeat("字", MaxQueryRunes+1))
+	_, _, err := queryTerms(strings.Repeat("字", MaxQueryRunes+1))
 	assertValidation(t, err, "invalid_query")
+}
+
+// The substring path builds a LIKE pattern out of the same terms, and LIKE has
+// its own wildcards. tokenize only yields letter and digit runs, so no term can
+// carry one today and the escaping in escapeLike is a guard rather than the
+// active defence - this test is what makes that claim checkable instead of
+// assumed, and it fails the moment the tokenizer starts emitting punctuation.
+func TestSubstringTermsNeverCarryLikeWildcards(t *testing.T) {
+	for _, query := range []string{"100%", "a_b", "50%_off", `back\slash`, "%%", "_"} {
+		terms, _, err := queryTerms(query)
+		if err != nil {
+			t.Fatalf("queryTerms(%q): %v", query, err)
+		}
+		for _, term := range terms {
+			if strings.ContainsAny(term, `%_\`) {
+				t.Errorf("queryTerms(%q) produced the term %q, which LIKE would read as syntax", query, term)
+			}
+		}
+	}
 }
 
 // ---------- hostile input never becomes MATCH syntax ----------
@@ -221,6 +244,11 @@ func TestSearchMatchesUnicodeAndCJK(t *testing.T) {
 	f.insert("go", "article", "published", "Go 并发实践", "关于 写作 与 计划 的内容", "", "2026-01-03T00:00:00Z")
 	f.insert("diary", "moment", "published", "", "今天 写作 很顺利", "", "2026-01-02T00:00:00Z")
 	f.insert("other", "moment", "published", "", "与搜索无关 的内容", "", "2026-01-01T00:00:00Z")
+	// Chinese is written without spaces between words, and unicode61 keeps such
+	// a run as ONE token. Every fixture above spaces its Chinese out, which is
+	// not how the language is written: that is why this suite passed while a
+	// real query for 评论 returned nothing at all.
+	f.insert("run", "moment", "published", "", "这是一段待评论的动态内容", "", "2026-01-04T00:00:00Z")
 
 	cases := []struct {
 		query string
@@ -230,6 +258,12 @@ func TestSearchMatchesUnicodeAndCJK(t *testing.T) {
 		{"写作 计划", []string{"go"}},
 		{"并发实践", []string{"go"}},
 		{"与搜索无关", []string{"other"}},
+		{"评论", []string{"run"}},
+		{"待评论", []string{"run"}},
+		{"待评论的动态", []string{"run"}},
+		{"一段", []string{"run"}},
+		{"评论 动态", []string{"run"}},
+		{"评论 不存在", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.query, func(t *testing.T) {
@@ -239,6 +273,57 @@ func TestSearchMatchesUnicodeAndCJK(t *testing.T) {
 				t.Errorf("results = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// A Latin query must keep the index's token matching: the substring path is a
+// CJK concession, not a new default, and "oogle" is not a word.
+func TestSearchKeepsTokenMatchingForLatinQueries(t *testing.T) {
+	f := newFixture(t)
+	f.insert("alpha", "moment", "published", "", "Google 发布了 Gemma", "", "2026-01-01T00:00:00Z")
+
+	cases := []struct {
+		query string
+		want  int
+	}{
+		{"Google", 1},
+		{"google", 1},
+		{"oogle", 0},
+		{"Goo", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.query, func(t *testing.T) {
+			if got := len(f.search(Options{Query: tc.query}).Results); got != tc.want {
+				t.Errorf("results = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// A run is matched as a substring, so a prefix, an infix or the whole run all
+// find it, and two separated terms both have to be present.
+func TestSearchRequiresEveryCJKTerm(t *testing.T) {
+	f := newFixture(t)
+	f.insert("both", "moment", "published", "", "今天待评论的动态", "", "2026-01-02T00:00:00Z")
+	f.insert("one", "moment", "published", "", "只评论了一句", "", "2026-01-01T00:00:00Z")
+
+	page := f.search(Options{Query: "今天 评论"})
+	if got := slugsOf(page); fmt.Sprint(got) != fmt.Sprint([]string{"both"}) {
+		t.Errorf("results = %v, want only the row carrying both terms", got)
+	}
+
+	page = f.search(Options{Query: "评论"})
+	if got := slugsOf(page); fmt.Sprint(got) != fmt.Sprint([]string{"both", "one"}) {
+		t.Errorf("results = %v, want both rows, newest first", got)
+	}
+
+	// Adjacent CJK with nothing between it is ONE term, so it is looked up as
+	// that exact phrase instead of being split into words: there are no word
+	// boundaries to split on, and inventing them would report matches the
+	// reader cannot see in the text.
+	page = f.search(Options{Query: "今天评论"})
+	if got := slugsOf(page); len(got) != 0 {
+		t.Errorf("results = %v, want none for a phrase no row contains", got)
 	}
 }
 
@@ -272,8 +357,9 @@ func TestSnippetIsPlainMarkedText(t *testing.T) {
 		t.Errorf("snippet %q does not mark the match", snippet)
 	}
 	// The fragment stays the stored plain text: escaping is the view's job, so a
-	// source tag is still a literal tag here.
-	if !strings.Contains(snippet, `<script>`) {
+	// source tag is still a literal tag here. The window may have cut the front
+	// of the body, so the check is on the part that survives.
+	if !strings.Contains(snippet, "</script>") || strings.Contains(snippet, "&lt;") {
 		t.Errorf("snippet %q pre-escaped or dropped the stored text", snippet)
 	}
 
@@ -314,6 +400,128 @@ func TestSnippetUsesTheBestMatchingColumn(t *testing.T) {
 		if !strings.Contains(result.Snippet, SnippetOpen+"独特标记词"+SnippetClose) {
 			t.Errorf("snippet of %s = %q, want the matched term from its own column", result.Slug, result.Snippet)
 		}
+	}
+}
+
+// The substring path builds its own fragment, so it owes the same guarantees as
+// the FTS one: the hit is marked, the markers stay balanced, and a long body is
+// cut instead of returned whole.
+func TestSubstringSnippetMarksTheHitAndCutsTheWindow(t *testing.T) {
+	f := newFixture(t)
+	f.insert("marked", "moment", "published", "",
+		"先有一句话，然后待评论的动态，最后还有一句。", "", "2026-01-02T00:00:00Z")
+	f.insert("long", "moment", "published", "",
+		strings.Repeat("前", 300)+"关键词"+strings.Repeat("后", 300), "", "2026-01-01T00:00:00Z")
+
+	page := f.search(Options{Query: "评论"})
+	if len(page.Results) != 1 || page.Results[0].Slug != "marked" {
+		t.Fatalf("results = %v, want only the row inside the run", slugsOf(page))
+	}
+	marked := page.Results[0].Snippet
+	if !strings.Contains(marked, SnippetOpen+"评论"+SnippetClose) {
+		t.Errorf("snippet %q does not mark the hit", marked)
+	}
+	if strings.HasPrefix(marked, "…") || strings.HasSuffix(marked, "…") {
+		t.Errorf("snippet %q was cut although the body is short", marked)
+	}
+	if !strings.Contains(marked, "先有一句话") {
+		t.Errorf("snippet %q dropped the lead context", marked)
+	}
+
+	long := f.search(Options{Query: "关键词"})
+	if len(long.Results) != 1 || long.Results[0].Slug != "long" {
+		t.Fatalf("results = %v, want the long row", slugsOf(long))
+	}
+	snippet := long.Results[0].Snippet
+	if !strings.Contains(snippet, SnippetOpen+"关键词"+SnippetClose) {
+		t.Errorf("snippet %q does not mark the hit", snippet)
+	}
+	if !strings.HasPrefix(snippet, "…") || !strings.HasSuffix(snippet, "…") {
+		t.Errorf("snippet %q is not cut on both sides", snippet)
+	}
+	if runes := utf8.RuneCountInString(snippet); runes > MaxSnippetRunes {
+		t.Errorf("snippet has %d runes, want at most %d", runes, MaxSnippetRunes)
+	}
+	if open, closed := strings.Count(snippet, SnippetOpen), strings.Count(snippet, SnippetClose); open != 1 || closed != 1 {
+		t.Errorf("snippet %q has %d open and %d close markers", snippet, open, closed)
+	}
+}
+
+func TestSubstringSnippetUsesTheBestMatchingColumn(t *testing.T) {
+	f := newFixture(t)
+	f.insert("title-hit", "article", "published", "独特标记词标题", "正文里没有这个词。", "", "2026-01-03T00:00:00Z")
+	f.insert("excerpt-hit", "article", "published", "普通标题", "正文里没有这个词。", "摘要里提到独特标记词", "2026-01-02T00:00:00Z")
+	f.insert("body-hit", "article", "published", "普通标题", "正文里有独特标记词。", "摘要里没有。", "2026-01-01T00:00:00Z")
+
+	page := f.search(Options{Query: "独特标记词"})
+	if len(page.Results) != 3 {
+		t.Fatalf("results = %v, want all three columns to match", slugsOf(page))
+	}
+	for _, result := range page.Results {
+		if !strings.Contains(result.Snippet, SnippetOpen+"独特标记词"+SnippetClose) {
+			t.Errorf("snippet of %s = %q, want the matched term from its own column", result.Slug, result.Snippet)
+		}
+	}
+}
+
+// The Latin terms of a mixed query reach the substring path too, and they are
+// matched the way LIKE matches them: case-insensitively.
+func TestSubstringPathFoldsLatinCase(t *testing.T) {
+	f := newFixture(t)
+	f.insert("mixed", "moment", "published", "", "Gemma 发布了新版本", "", "2026-01-01T00:00:00Z")
+
+	if got := slugsOf(f.search(Options{Query: "gemma 发布"})); fmt.Sprint(got) != fmt.Sprint([]string{"mixed"}) {
+		t.Errorf("results = %v, want the mixed row", got)
+	}
+}
+
+// ---------- the substring path's plan ----------
+
+// explainQueryPlan returns SQLite's plan for one statement as a single line.
+func explainQueryPlan(t *testing.T, f *fixture, query string, args []any) string {
+	t.Helper()
+	rows, err := f.db.Query("EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	defer rows.Close()
+
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatalf("explain row: %v", err)
+		}
+		plan = append(plan, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("explain rows: %v", err)
+	}
+	return strings.Join(plan, " | ")
+}
+
+// A CJK query cannot seek, so the plan is all that stands between it and a full
+// sort: reading through idx_posts_feed keeps the rows in the order the cursor
+// depends on, while a plan that sorted would build a temp B-tree over the whole
+// table on every Chinese search.
+func TestSubstringQueryReadsThroughTheFeedIndex(t *testing.T) {
+	f := newFixture(t)
+
+	query, args := substringQuery([]string{"评论"}, "", 0, 21)
+	plan := explainQueryPlan(t, f, query, args)
+	if !strings.Contains(plan, "idx_posts_feed") {
+		t.Errorf("the substring query does not read idx_posts_feed: %s", plan)
+	}
+	if strings.Contains(strings.ToUpper(plan), "TEMP B-TREE") {
+		t.Errorf("the substring query sorts instead of walking the index: %s", plan)
+	}
+
+	// The assertions have to be able to fail: with the index taken away the same
+	// statement must not report it.
+	withoutIndex := strings.Replace(query, "FROM posts p", "FROM posts p NOT INDEXED", 1)
+	if plan := explainQueryPlan(t, f, withoutIndex, args); strings.Contains(plan, "idx_posts_feed") {
+		t.Errorf("NOT INDEXED still reports the index, so the check above proves nothing: %s", plan)
 	}
 }
 

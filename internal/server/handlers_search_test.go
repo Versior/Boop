@@ -118,7 +118,10 @@ func TestSearchPageStatesAndActiveNav(t *testing.T) {
 		if !strings.Contains(body, "<mark>关键词</mark>") {
 			t.Error("the highlighted match is missing from the result row")
 		}
-		if !strings.Contains(body, "&lt;script&gt;") {
+		// The snippet is plain text the template escapes. The fragment is a window
+		// around the hit, so the front of this body may have been cut; the check is
+		// on the part that survives.
+		if !strings.Contains(body, "&lt;/script&gt;") {
 			t.Error("the stored text was not escaped in the snippet")
 		}
 		if strings.Contains(body, "<script>") {
