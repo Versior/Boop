@@ -58,10 +58,6 @@
   <symbol id="i-bookmark" viewBox="0 0 24 24">
     <path d="M18.6 20.6 12 15.6l-6.6 5V5.8a2 2 0 0 1 2-2h9.2a2 2 0 0 1 2 2z"/>
   </symbol>
-  <symbol id="i-user" viewBox="0 0 24 24">
-    <circle cx="12" cy="8" r="3.8"/>
-    <path d="M4.9 20.4a7.4 7.4 0 0 1 14.2 0"/>
-  </symbol>
   <symbol id="i-login" viewBox="0 0 24 24">
     <path d="M3.4 12h10.4"/>
     <path d="m9.4 7.6 4.4 4.4-4.4 4.4"/>
@@ -117,7 +113,7 @@
 
   {{if .Admin}}
   <!-- ========== 后台侧栏 ========== -->
-  <!-- 后台不沿用前台的图标条：首页/搜索/文章/摄影/收藏在管理页里没有意义，沿用还会让两套界面
+  <!-- 后台不沿用前台的导航：首页/搜索/文章/摄影/收藏在管理页里没有意义，沿用还会让两套界面
        长得一模一样。侧栏带文字，模块一眼可见；设置内部的分类在页面顶部那一排标签里。 -->
   <aside class="rail-admin" data-rail>
     <a class="admin-brand" href="/admin" title="站长后台">
@@ -146,53 +142,59 @@
   </aside>
   {{else}}
   <!-- ========== 左栏 ========== -->
+  <!-- 左栏带文字，和后台侧栏说同一套语言：最上面是品牌行（标记 + 站点名 + 外观开关），中间
+       是五个目的地，最下面是账号区。五项而不是七项：外观是个开关而不是一个页面，它归品牌行；
+       「我的」原本直接链到 /login，可 /login 对已登录的人只是空跳转，于是它归账号区，
+       未登录时才出现，并且就叫「登录」。 -->
   <aside class="rail-left" data-rail>
     <div class="rail-top">
-      <a class="brand" href="/" aria-label="{{.SiteName}} 首页">
-        <span class="brandmark" aria-hidden="true"><svg class="ic ic-logo" viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
-        <span class="brand-name">{{.SiteName}}</span>
-      </a>
+      <div class="rail-head">
+        <a class="brand" href="/" aria-label="{{.SiteName}} 首页">
+          <span class="brandmark" aria-hidden="true"><svg class="ic ic-logo" viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
+          <span class="brand-name">{{.SiteName}}</span>
+        </a>
+        <button class="rail-toggle" type="button" data-theme-toggle aria-label="切换到深色主题" title="切换到深色主题">
+          <svg class="ic ic-moon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-moon"/></svg>
+          <svg class="ic ic-sun" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sun"/></svg>
+        </button>
+      </div>
       <nav class="nav" aria-label="主导航">
-        <a class="nav-item{{if eq .Filter ""}} on{{end}}" href="/"{{if eq .Filter ""}} aria-current="page"{{end}} title="首页">
+        <a class="nav-item{{if eq .Filter ""}} on{{end}}" href="/"{{if eq .Filter ""}} aria-current="page"{{end}}>
           <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-home"/></svg><span class="label">首页</span>
         </a>
-        <a class="nav-item{{if eq .Filter "search"}} on{{end}}" href="/search"{{if eq .Filter "search"}} aria-current="page"{{end}} title="搜索">
+        <a class="nav-item{{if eq .Filter "search"}} on{{end}}" href="/search"{{if eq .Filter "search"}} aria-current="page"{{end}}>
           <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg><span class="label">搜索</span>
         </a>
-        <a class="nav-item{{if eq .Filter "article"}} on{{end}}" href="/?type=article"{{if eq .Filter "article"}} aria-current="page"{{end}} title="文章">
+        <a class="nav-item{{if eq .Filter "article"}} on{{end}}" href="/?type=article"{{if eq .Filter "article"}} aria-current="page"{{end}}>
           <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-article"/></svg><span class="label">文章</span>
         </a>
-        <a class="nav-item{{if eq .Filter "photo"}} on{{end}}" href="/?type=photo"{{if eq .Filter "photo"}} aria-current="page"{{end}} title="摄影">
+        <a class="nav-item{{if eq .Filter "photo"}} on{{end}}" href="/?type=photo"{{if eq .Filter "photo"}} aria-current="page"{{end}}>
           <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-camera"/></svg><span class="label">摄影</span>
         </a>
-        <a class="nav-item{{if eq .Filter "bookmarks"}} on{{end}}" href="/bookmarks"{{if eq .Filter "bookmarks"}} aria-current="page"{{end}} title="收藏">
+        <a class="nav-item{{if eq .Filter "bookmarks"}} on{{end}}" href="/bookmarks"{{if eq .Filter "bookmarks"}} aria-current="page"{{end}}>
           <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bookmark"/></svg><span class="label">收藏</span>
         </a>
-        <a class="nav-item" href="/login" title="我的">
-          <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-user"/></svg><span class="label">我的</span>
-        </a>
-        <button class="nav-item" type="button" data-theme-toggle data-theme-prefix="外观" aria-label="外观：切换到深色主题" title="切换到深色主题">
-          <svg class="ic ic-nav ic-moon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-moon"/></svg>
-          <svg class="ic ic-nav ic-sun" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sun"/></svg>
-          <span class="label">外观</span>
-        </button>
       </nav>
     </div>
-    {{if .SignedIn}}
-    <!-- 底部一组与主导航分开，由 .rail-left 的 space-between 顶到底部。站长后台只有站长
-         看得到（读者拿到的只是一条必然 403 的链接），退出登录是每个会话都要有的：没有它，
-         已登录的人在这套界面里没有任何办法结束会话。 -->
+    <!-- 账号区由 .rail-left 的 space-between 顶到底部，横线把它和目的地分开。站长后台只有
+         站长看得到（读者拿到的只是一条必然 403 的链接），退出登录是每个会话都要有的：没有它，
+         已登录的人在这套界面里没有任何办法结束会话。未登录时这一格是回到登录页的那条路。 -->
     <div class="rail-foot">
+      {{if .SignedIn}}
       {{if .Owner}}
-      <a class="nav-item" href="/admin" title="站长后台">
+      <a class="nav-item" href="/admin">
         <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-settings"/></svg><span class="label">站长后台</span>
       </a>
       {{end}}
-      <button class="nav-item" type="button" data-logout title="退出登录">
+      <button class="nav-item" type="button" data-logout>
         <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-logout"/></svg><span class="label">退出登录</span>
       </button>
+      {{else}}
+      <a class="nav-item" href="/login">
+        <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-login"/></svg><span class="label">登录</span>
+      </a>
+      {{end}}
     </div>
-    {{end}}
   </aside>
   {{end}}
 
@@ -218,7 +220,7 @@
             <svg class="ic ic-nav ic-sun" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sun"/></svg>
           </button>
           {{if .SignedIn}}
-          <!-- 左栏在 700px 以下整个隐藏，所以手机上的退出登录只能放在这条顶栏里；
+          <!-- 左栏在 899px 以下整个隐藏，所以窄屏的退出登录只能放在这条顶栏里；
                两个入口是同一段行为的两处落点，由 app.js 的 [data-logout] 一起接管。 -->
           <button class="icon-btn" type="button" data-logout aria-label="退出登录" title="退出登录">
             <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-logout"/></svg>
@@ -232,8 +234,8 @@
   </main>
 
   <!-- ========== 右栏 ========== -->
-  <!-- 这里曾有一个搜索框。搜索不需要第三个入口：左栏图标条上的“搜索”在宽屏可见，移动端
-       底部导航上的“搜索”在 700px 以下可见，两者都直接链到 /search，任何视口都够得着。
+  <!-- 这里曾有一个搜索框。搜索不需要第三个入口：左栏的“搜索”在宽屏可见，移动端
+       底部导航上的“搜索”在窄屏可见，两者都直接链到 /search，任何视口都够得着。
        这一列现在只为作者状态卡片存在，而卡片只在首页渲染，所以没有卡片就没有这一列：留下
        空的第三道轨会白占 336px，把中栏推到视觉中心的左边。 -->
   {{if .AIStatus.Text}}
@@ -261,7 +263,9 @@
   </a>
 </nav>
 {{else}}
-<!-- 顺序与左栏图标条一致，搜索入口与左栏同样是 /search。 -->
+<!-- 与左栏是同一组目的地、同一个顺序、同一组地址，只是形态不同：左栏竖向带文字，这里横排
+     贴底。末尾的「登录」在左栏归账号区，到了这里没有别的地方可放，就并进同一条。退出登录
+     不在这一条里，它在顶栏（见上）。 -->
 <nav class="bottom-nav" aria-label="移动端导航">
   <a class="{{if eq .Filter ""}}on{{end}}" href="/"{{if eq .Filter ""}} aria-current="page"{{end}}>
     <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-home"/></svg><span>首页</span>
@@ -279,7 +283,7 @@
     <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bookmark"/></svg><span>收藏</span>
   </a>
   <a href="/login">
-    <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-login"/></svg><span>我的</span>
+    <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-login"/></svg><span>登录</span>
   </a>
 </nav>
 {{end}}

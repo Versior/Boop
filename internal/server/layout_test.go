@@ -159,6 +159,71 @@ func TestDetailPhotoIsNotCropped(t *testing.T) {
 	}
 }
 
+// The left rail used to be a 68px strip of seven identical circles: the brand
+// was a mark with no name beside it, and three of the seven were not
+// destinations at all - a theme switch, a second copy of that switch, and a link
+// to /login that is a no-op for anyone already signed in. This pins the shape it
+// has now: the site's name next to its mark, exactly five destinations, the
+// switch as a control of its own, and an account area that follows the session.
+//
+// Visibility itself is CSS's job and cannot be asserted here, but the two
+// selectors that used to hide the rail's text are checked below: putting them
+// back is precisely what "no brand name next to the logo" looked like.
+func TestTheFrontRailNamesTheBrandAndKeepsFiveDestinations(t *testing.T) {
+	f := newContentFixture(t)
+
+	rail := func(cookie *http.Cookie) string {
+		t.Helper()
+		body := f.do(t, http.MethodGet, "/", "", nil, cookie).Body.String()
+		return markupBlock(t, body, `data-rail`, "</aside>")
+	}
+
+	guest := rail(nil)
+	for _, want := range []string{
+		`<span class="brand-name">`,
+		`data-theme-toggle`,
+	} {
+		if !strings.Contains(guest, want) {
+			t.Errorf("the rail is missing %s:\n%s", want, guest)
+		}
+	}
+	nav := navBlock(t, guest, "nav")
+	if got := strings.Count(nav, `class="nav-item`); got != 5 {
+		t.Errorf("the rail navigation has %d entries, want 5:\n%s", got, nav)
+	}
+	// The switch and the account entries are controls, not destinations, so none
+	// of them belongs inside the navigation element.
+	for _, unwanted := range []string{"外观", "我的", "登录", "退出登录"} {
+		if strings.Contains(nav, unwanted) {
+			t.Errorf("the rail navigation offers %s, which is not one of the five", unwanted)
+		}
+	}
+	if strings.Contains(nav, "data-theme-toggle") {
+		t.Error("the theme switch is one of the navigation entries")
+	}
+	// A guest gets the way in; a session gets the way out. Never both.
+	foot := markupBlock(t, guest, `class="rail-foot"`, "</div>")
+	if !strings.Contains(foot, `href="/login"`) {
+		t.Errorf("the rail offers a guest no way to sign in:\n%s", foot)
+	}
+
+	owner := rail(f.cookie)
+	foot = markupBlock(t, owner, `class="rail-foot"`, "</div>")
+	if !strings.Contains(foot, `href="/admin"`) || !strings.Contains(foot, "data-logout") {
+		t.Errorf("the rail account area is missing an entry for the owner:\n%s", foot)
+	}
+	if strings.Contains(foot, `href="/login"`) {
+		t.Error("a signed-in session is still offered the sign-in page")
+	}
+
+	css := f.do(t, http.MethodGet, "/static/app.css", "", nil, nil).Body.String()
+	for _, hidden := range []string{".rail-left .nav-item .label", ".rail-left .brand-name,"} {
+		if strings.Contains(css, hidden) {
+			t.Errorf("app.css hides the rail's own text again via %q", hidden)
+		}
+	}
+}
+
 // TestSignedInPagesOfferSignOut pins the way out of a session. The endpoint
 // (POST /api/v1/auth/logout) and the session store were always complete: the
 // shell simply rendered no control on any page that called them, so a visitor
@@ -167,7 +232,7 @@ func TestDetailPhotoIsNotCropped(t *testing.T) {
 // Three identities are asserted because the two entries in the left rail's
 // footer do not share a condition: Owner adds the moderation link, SignedIn
 // adds the sign-out control, and a guest gets neither. Two entries are the
-// target, not one: the left rail is display:none below 700px and the top bar is
+// target, not one: the left rail is display:none below 899px and the top bar is
 // display:none above it, so a control that exists in only one of them is
 // unreachable at some width.
 func TestSignedInPagesOfferSignOut(t *testing.T) {

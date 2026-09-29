@@ -1,9 +1,12 @@
 {{define "content"}}
     <h1 class="sr-only">{{.SiteName}} 首页</h1>
 
-    <!-- 作者头部：封面图 + 大头像 + 站长标识 + 简介。Boop 只有一个作者、没有关注关系
-         （docs/PRODUCT.md §7），所以这里是站点自己的门面，不是用户主页：没有关注/粉丝
-         这类空壳数字。封面图留空时整条横带不渲染，头像也不会被顶上去。 -->
+    <!-- 作者头部：封面图 + 大头像 + 站长标识 + 简介 + 两条日期。Boop 只有一个作者、没有
+         关注关系（docs/PRODUCT.md §7），所以这里是站点自己的门面，不是用户主页：没有关注/
+         粉丝这类空壳数字，有的只是这个站真实存在的事实——第一篇文章是哪天发的、最近一篇是
+         哪天发的。两端都取自信息流自己列出的内容（content.PublishedSpan 与 Feed 同一排序），
+         所以「最近更新于」永远不会指向信息流顶上那张卡之外的东西。封面图留空时整条横带不
+         渲染，头像也不会被顶上去。 -->
     {{if .Header.Show}}
     <section class="author-head{{if .Header.CoverURL}} has-cover{{else}} is-plain{{end}}">
       {{if .Header.CoverURL}}
@@ -17,14 +20,19 @@
             <span class="chip chip-owner">站长</span>
           </div>
           {{if .Header.Bio}}<p class="author-bio">{{.Header.Bio}}</p>{{end}}
+          <p class="author-facts">
+            {{with .Header.Since}}<span class="author-fact">始于 <time datetime="{{$.Header.SinceISO}}">{{.}}</time></span>{{end}}
+            {{with .Header.Updated}}<span class="author-fact">最近更新于 <time datetime="{{$.Header.UpdatedISO}}">{{.}}</time></span>{{end}}
+            <a class="author-fact author-rss" href="/feed.xml">RSS 订阅</a>
+          </p>
         </div>
       </div>
     </section>
     {{end}}
 
     <!-- 内容类型行。它只列信息流接口真正接受的筛选值：动态没有自己的入口，因为动态只
-         出现在不筛选的信息流里（docs/PRODUCT.md §5.1）。每一项带条数——左栏的图标条已经
-         能走到同样的三个视图，没有条数这一行就只是重复。 -->
+         出现在不筛选的信息流里（docs/PRODUCT.md §5.1）。每一项带条数——左栏已经能走到同样
+         的三个视图，没有条数这一行就只是重复。 -->
     <nav class="type-tabs" aria-label="内容类型">
       {{range .Tabs}}
       <a class="type-tab{{if .Active}} on{{end}}" href="{{.URL}}"{{if .Active}} aria-current="page"{{end}}>

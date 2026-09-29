@@ -31,11 +31,11 @@ html{-webkit-text-size-adjust:100%}
   --r-lg:16px;
   --r-md:14px;
 
-  /* 三栏栅格：左栏图标条 68 / 主流 600 / 右栏 336 */
+  /* 三栏栅格：左栏 240 / 主流 600 / 右栏 336 */
   --main-w:600px;
   --aside-w:336px;
-  --rail-icon-w:68px;
-  /* 后台侧栏带文字，比前台的图标条宽：模块名必须看得见。 */
+  --rail-w:240px;
+  /* 后台侧栏的宽度与前台侧栏不同：模块名比目的地名长，需要更宽。 */
   --rail-admin-w:230px;
   --pad:16px;
 }
@@ -76,12 +76,9 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 a{color:inherit;text-decoration:none}
 h1,h2,h3,p{margin:0}
 .sprite{position:absolute;width:0;height:0;overflow:hidden}
-/* 视觉隐藏。sr-only 是显式用法；左栏是图标式导航，品牌名与每一项的文字在视觉上不出现，
-   但仍留在无障碍树里，读屏依然播报“首页/搜索/…”，因此不需要给每个链接再补 aria-label。
-   移动端顶栏的 .brand-name 不在 .rail-left 内，仍然是可见的站点名。 */
-.sr-only,
-.rail-left .brand-name,
-.rail-left .nav-item .label{
+/* 视觉隐藏。sr-only 是显式用法；读屏要读却不该占版面的文字放这里。左栏不在此列：它带
+   文字，品牌名与每一项的标签都直接可见。 */
+.sr-only{
   position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0;
 }
@@ -114,21 +111,20 @@ h1,h2,h3,p{margin:0}
    留在那里会把中栏推到视觉中心的左边 —— 那正是 ≤1239px 时右栏 display:none 的老毛病。 */
 .app{
   display:grid;
-  grid-template-columns:var(--rail-icon-w) var(--main-w);
+  grid-template-columns:var(--rail-w) var(--main-w);
   justify-content:center;
   align-items:start;
   margin:0 auto;
 }
-.app.has-rail{grid-template-columns:var(--rail-icon-w) var(--main-w) var(--aside-w)}
+.app.has-rail{grid-template-columns:var(--rail-w) var(--main-w) var(--aside-w)}
 /* 后台只有两栏：带文字的侧栏 + 中栏。后台不渲染右栏，作者状态卡片只属于首页。 */
 .app.is-admin{grid-template-columns:var(--rail-admin-w) var(--main-w)}
 .rail-left{
   position:sticky;top:0;
   height:100vh;height:100dvh;
   display:flex;flex-direction:column;justify-content:space-between;
-  align-items:center;
   gap:16px;
-  padding:14px 12px 16px;
+  padding:14px 14px 16px;
   border-right:1px solid var(--line);
 }
 .rail-right{
@@ -141,49 +137,66 @@ h1,h2,h3,p{margin:0}
 .main{min-width:0;min-height:100vh;min-height:100dvh}
 
 /* ---------- 5. 左栏 ---------- */
-/* 左栏是图标条：桌面端也不再显示导航文字，品牌名同样只留标记。文字保留在无障碍树中。 */
+/* 左栏带文字，和后台侧栏说同一套语言：品牌行、五个目的地、账号区。五项是有意的取舍：
+   外观是个开关而不是一个页面，它归品牌行右端；「我的」原本直接链到 /login，而 /login
+   对已登录的人只是空跳转，于是它归账号区，未登录时才出现，并且就叫「登录」。 */
 .rail-top{width:100%}
+.rail-head{
+  display:flex;align-items:center;gap:6px;
+  width:100%;margin-bottom:10px;
+}
 .brand{
-  display:flex;align-items:center;justify-content:center;
-  width:44px;height:44px;padding:0;
-  margin:0 auto 8px;
-  border-radius:999px;
+  display:flex;align-items:center;gap:10px;min-width:0;
+  flex:1 1 auto;
+  padding:7px 8px;border-radius:12px;
   transition:background .12s ease;
 }
 .brand:hover{background:var(--hover)}
 .brandmark{
   display:grid;place-items:center;
-  width:36px;height:36px;flex:0 0 36px;
+  width:34px;height:34px;flex:0 0 34px;
   border-radius:11px;
   background:var(--mark-bg);color:var(--mark-fg);
 }
-/* 只在移动端顶栏可见。 */
-.brand-name{font-size:19px;font-weight:800;letter-spacing:-.02em}
+/* 站点名必须看得见：它是这一栏的头，也是左栏存在的理由之一。窄到放不下时截断而不是挤掉
+   右侧的开关。 */
+.brand-name{
+  font-size:17px;font-weight:800;letter-spacing:-.01em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+/* 外观开关属于这一栏（顶栏那个只在窄屏出现），但它是开关不是页面，所以不占导航的一格。 */
+.rail-toggle{
+  display:grid;place-items:center;
+  width:34px;height:34px;flex:0 0 34px;border-radius:50%;
+  color:var(--muted);
+  transition:background .12s ease,color .12s ease;
+}
+.rail-toggle:hover{background:var(--hover-strong);color:var(--ink)}
 
-.nav{display:flex;flex-direction:column;align-items:center;gap:4px;width:100%}
+.nav{display:flex;flex-direction:column;gap:2px;width:100%}
 .nav-item{
-  display:flex;align-items:center;justify-content:center;gap:0;
-  width:44px;height:44px;padding:0;border-radius:999px;
-  font-size:15px;font-weight:500;color:var(--ink);
-  transition:background .12s ease;
+  display:flex;align-items:center;gap:12px;
+  width:100%;padding:10px 12px;border-radius:12px;
+  font-size:15px;font-weight:500;color:var(--ink);text-align:left;
+  transition:background .12s ease,color .12s ease;
 }
 .nav-item:hover{background:var(--hover)}
-.nav-item.on{font-weight:700}
+.nav-item.on{background:var(--accent-soft);color:var(--accent);font-weight:700}
 .nav-item.on .ic{stroke-width:2.2}
 
-/* 站长后台入口：由 .rail-left 的 space-between 顶到底部，横线把两段图标分开。
-   只在站长登录时渲染；图标条隐藏的是 .label，所以文字仍在无障碍树里，
-   读屏播报“站长后台”，也不再有可见文字需要额外 aria-label。 */
+/* 账号区：由 .rail-left 的 space-between 顶到底部，横线把它和目的地分开。站长后台只在
+   站长登录时渲染（读者拿到的只是一条必然 403 的链接）；未登录时这一格是「登录」。 */
 .rail-foot{
   width:100%;
-  display:flex;flex-direction:column;align-items:center;
+  display:flex;flex-direction:column;gap:2px;
   padding-top:12px;
   border-top:1px solid var(--line);
 }
 
 /* ---------- 5.1 后台侧栏 ---------- */
-/* 与前台图标条相反：这里每一项都带文字，因为后台要“分类明确”而不是复刻前台的图标语言。
-   侧栏管模块（设置 / 评论审核 / 回到前台 / 退出登录），设置内部的四个分类由页面顶部的标签行管。 */
+/* 与前台侧栏同一套语言（品牌行 + 带文字的条目 + 底部一组），差别在条目本身：这里管模块，
+   前台管内容视图。侧栏管模块（设置 / 评论审核 / 回到前台 / 退出登录），设置内部的四个
+   分类由页面顶部的标签行管。 */
 .rail-admin{
   position:sticky;top:0;
   height:100vh;height:100dvh;
@@ -251,7 +264,7 @@ h1,h2,h3,p{margin:0}
 /* ---------- 7. 内容流 ---------- */
 /* 7.0 首页作者头部与内容类型行：这一段的编号在 7.1 之前，因为它在中栏里也排在信息流之前。 */
 /* Boop 只有一个作者、没有关注关系，所以这一块是站点自己的门面而不是用户主页：
-   封面图 + 大头像 + 站长标识 + 一句简介，不放关注/粉丝这类这里根本不存在的数字。 */
+   封面图 + 大头像 + 站长标识 + 一句简介 + 两条日期，不放关注/粉丝这类这里根本不存在的数字。 */
 .author-head{border-bottom:1px solid var(--line)}
 .author-cover{display:block;width:100%;aspect-ratio:3/1;background:var(--bg-soft);overflow:hidden}
 .author-cover img{display:block;width:100%;height:100%;object-fit:cover}
@@ -265,9 +278,19 @@ h1,h2,h3,p{margin:0}
 .author-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .author-name{font-size:20px;font-weight:800;line-height:1.25;letter-spacing:-.01em}
 .author-bio{margin-top:4px;color:var(--muted);font-size:14px;line-height:1.5;word-break:break-word}
+/* 两条日期说的是这个站自己的事实——最早一篇与最近一篇是哪天发的，两端都取自信息流列出
+   的内容；订阅入口也在这里，因为 RSS 是站上唯一一处把内容交给站外的地方。 */
+.author-facts{
+  display:flex;flex-wrap:wrap;gap:4px 14px;
+  margin-top:6px;
+  color:var(--muted);font-size:13px;line-height:1.5;
+}
+.author-fact time{font-variant-numeric:tabular-nums}
+.author-rss{color:var(--accent);font-weight:600}
+.author-rss:hover{text-decoration:underline}
 
 /* 类型行只列信息流接口真正接受的筛选值（动态没有入口，见 docs/PRODUCT.md §5.1），
-   并且带条数：左栏的图标条已经能走到同样的三个视图，没有条数这一行就只是重复。 */
+   并且带条数：左栏已经能走到同样的三个视图，没有条数这一行就只是重复。 */
 .type-tabs{display:flex;align-items:stretch;border-bottom:1px solid var(--line)}
 .type-tab{
   flex:1;display:flex;align-items:center;justify-content:center;gap:6px;
@@ -831,25 +854,20 @@ button.action:disabled{opacity:.6;cursor:default}
 /* 下面三段按宽度递减排列。 */
 @media (max-width:1239px){
   /* 卡片改由 home.html 的 .status-mobile 呈现，右栏整体消失，第三道轨要一起撤掉。 */
-  .app.has-rail{grid-template-columns:var(--rail-icon-w) var(--main-w)}
+  .app.has-rail{grid-template-columns:var(--rail-w) var(--main-w)}
   .rail-right{display:none}
 
   .status-mobile{display:block;padding:14px var(--pad) 16px;border-bottom:1px solid var(--line)}
 }
 
-/* 后台侧栏 230 + 中栏 600 = 830，所以 900px 以下收起侧栏；同时把后台顶栏提前显示，
-   否则 700–899 之间后台会没有任何导航入口（顶栏本来只在 700px 以下出现）。 */
+/* 两套侧栏都在 899px 以下收起：侧栏和中栏在这个宽度里放不下（前台 240 + 600 = 840，
+   后台 230 + 600 = 830）。收起之后两套界面都只剩中栏，导航交给顶栏与底部导航——底部导航
+   本来只在窄屏出现，正好接上侧栏让出来的那部分。 */
 @media (max-width:899px){
-  .app.is-admin{grid-template-columns:var(--main-w)}
-  .rail-admin{display:none}
-  .app.is-admin .topbar{display:block}
-}
-
-@media (max-width:700px){
-  .app{display:block}
+  .app,.app.has-rail,.app.is-admin{grid-template-columns:var(--main-w)}
   .rail-left,.rail-right,.rail-admin{display:none}
-  .main{min-height:0}
   .topbar{display:block}
+  .main{min-height:0}
 
   body{padding-bottom:calc(64px + env(safe-area-inset-bottom))}
 
@@ -870,6 +888,12 @@ button.action:disabled{opacity:.6;cursor:default}
   }
   .bottom-nav > *.on{color:var(--ink);font-weight:700}
   .bottom-nav > *.on .ic{stroke-width:2.2}
+}
+
+/* 中栏自己就是 600px 宽，所以视口窄到放不下它之后，它改回流式全宽：再居中一条固定宽度
+   就不是「窄屏」，而是把两侧都推出屏幕（横向溢出，正文会被切掉）。 */
+@media (max-width:640px){
+  .app,.app.has-rail,.app.is-admin{display:block}
 }
 
 @media (prefers-reduced-motion:reduce){

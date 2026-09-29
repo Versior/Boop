@@ -13,6 +13,7 @@ import (
 	"boop/internal/auth"
 	"boop/internal/config"
 	"boop/internal/content"
+	"boop/internal/settings"
 )
 
 // contentFixture is the owner's browser: a signed-in owner session plus the
@@ -702,10 +703,14 @@ func TestHomePageEmptyStateAndFilters(t *testing.T) {
 func TestHomePageAuthorHeaderAndTypeRow(t *testing.T) {
 	c := newContentFixture(t)
 	assetID := c.insertAssetFixture(t, "2026/09/header.jpg")
-	c.createOK(t, map[string]any{"type": "moment", "status": "published", "body": "动态正文甲"})
+	// A draft first: it is the oldest row in the table, so a span query that
+	// forgot the visibility rule would date the site from it (a draft has no
+	// published_at, and the line would disappear) instead of from the feed.
+	c.createOK(t, map[string]any{"type": "moment", "status": "draft", "body": "草稿不算"})
+	oldest := c.createOK(t, map[string]any{"type": "moment", "status": "published", "body": "动态正文甲"})
 	c.createOK(t, map[string]any{"type": "article", "status": "published", "title": "文章标题乙", "body": "正文"})
 	c.createOK(t, map[string]any{"type": "article", "status": "published", "title": "文章标题丙", "body": "正文"})
-	c.createOK(t, map[string]any{"type": "photo", "status": "published", "asset_ids": []int64{assetID}})
+	newest := c.createOK(t, map[string]any{"type": "photo", "status": "published", "asset_ids": []int64{assetID}})
 
 	const (
 		cover  = "https://cdn.example.com/cover.jpg"
@@ -747,6 +752,29 @@ func TestHomePageAuthorHeaderAndTypeRow(t *testing.T) {
 	// the row must not offer a filter the server answers with a 400.
 	if strings.Contains(body, "type=moment") {
 		t.Error("the type row offers a moment filter")
+	}
+	// The two dates are the ends of the list the reader is looking at: the first
+	// post that went up, and the most recent one. Both carry the stored value in
+	// datetime and a readable one in the site timezone.
+	location := loadLocation(settings.Defaults().SiteTimezone)
+	sinceISO := oldest["published_at"].(string)
+	updatedISO := newest["published_at"].(string)
+	parsedSince, err := time.Parse(content.TimestampFormat, sinceISO)
+	if err != nil {
+		t.Fatalf("parse the oldest published_at %q: %v", sinceISO, err)
+	}
+	wantSince := parsedSince.In(location).Format("2006年1月2日")
+	for _, want := range []string{
+		`<span class="author-fact">始于 <time datetime="` + sinceISO + `">` + wantSince + `</time></span>`,
+		`<span class="author-fact">最近更新于 <time datetime="` + updatedISO + `">`,
+		`<a class="author-fact author-rss" href="/feed.xml">RSS 订阅</a>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the author block is missing %s", want)
+		}
+	}
+	if strings.Contains(body, `最近更新于 <time datetime="`+updatedISO+`"></time>`) {
+		t.Error("the author block dates the site with an empty string")
 	}
 	// Boop has one author and no follow graph (docs/PRODUCT.md §7), so the block
 	// must not grow the empty follow/fan counters a user profile would carry.
@@ -827,6 +855,9 @@ func TestHomePageCursorLink(t *testing.T) {
 	// and its counts describe the whole site rather than this page.
 	if strings.Contains(second, `class="author-head`) {
 		t.Error("the cursor page repeated the author header")
+	}
+	if strings.Contains(second, `class="author-facts"`) {
+		t.Error("the cursor page repeated the author header's dates")
 	}
 	if !strings.Contains(second, `class="type-tabs"`) {
 		t.Error("the cursor page is missing the type row")

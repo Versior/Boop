@@ -220,7 +220,7 @@ AI 接口规则：
 ## HTML 页面
 
 - `GET /` 首页 SSR：作者头部 + 内容类型行 + 信息流。
-  - 作者头部（`.author-head`）是站点自己的门面而不是用户主页：封面图（`site_cover_url`，留空则整条横带不渲染）、大头像（与信息流同一套 `site_avatar_url` → 站长账号 → 内置 SVG 的链）、站长标识与一句简介（`site_description`）。Boop 只有一个作者、没有关注关系（`docs/PRODUCT.md` §7），因此这里没有关注/粉丝这类计数。
+  - 作者头部（`.author-head`）是站点自己的门面而不是用户主页：封面图（`site_cover_url`，留空则整条横带不渲染）、大头像（与信息流同一套 `site_avatar_url` → 站长账号 → 内置 SVG 的链）、站长标识、一句简介（`site_description`），以及两条日期——「始于」与「最近更新于」（`.author-facts`，`content.PublishedSpan` 一条语句取首尾两端，排序与 `Feed` 一致，且只列信息流愿意列出的内容，所以这一行不会指向信息流之外的帖子；空站点两处都不渲染）。另有指向 `/feed.xml` 的订阅入口。Boop 只有一个作者、没有关注关系（`docs/PRODUCT.md` §7），因此这里没有关注/粉丝这类计数。
   - 类型行（`.type-tabs`）只列信息流接口真正接受的三个筛选值——全部 `/`、文章 `/?type=article`、摄影 `/?type=photo`——每一项带**已发布内容条数**（一条 `GROUP BY type` 的真实 COUNT，与 `Feed` 同一条可见性规则：草稿、归档与软删除都不计入）。动态没有自己的入口，因为动态只出现在不筛选的信息流里（`docs/PRODUCT.md` §5.1）；因此这一行不会出现服务端会以 400 回绝的筛选值。条数是这一行存在的理由：左栏与底部导航已经能走到同样的三个视图。
   - 作者头部只画在信息流的第一页：带 `cursor` 的续页不重复它，但类型行照画（它同时是回到顶部的那条路，且条数描述整个站点而不是这一页）。
 - `GET /p/{slug}` 内容详情 SSR。
@@ -229,9 +229,9 @@ AI 接口规则：
 - `GET /login`、`GET /register`。
 - `GET /bookmarks` 登录用户收藏；游客重定向到 `/login`。
 - `GET /login` 与 `GET /register` 在 GitHub 客户端 ID 与 Secret **都能解密且非空**时显示同一个 `/auth/github/start` 登录入口（注册页在关闭公开注册后仍然显示，供已绑定的账号登录）；未配置 `BOOP_MASTER_KEY`、缺少任一半或密文损坏（换了主密钥）时隐藏入口并写脱敏告警，`/auth/github/start` 也随之安全失败，不会发出任何 Session。该判断每次都实际解密，不做缓存。
-- `GET /admin` 站长管理入口，303 跳转到 `/admin/settings`，再 303 到第一个设置分类 `/admin/settings/site`；游客重定向到 `/login`，普通读者得到 403 HTML 页。左栏底部对站长渲染一个指向 `/admin` 的齿轮入口，游客与读者的页面里没有这段 DOM；移动端顶栏用同样只对站长可见的图标按钮承担同一入口。
-- `GET /admin/comments` 与 `GET /admin/settings/{section}` 是站长页面，`{section}` 取 `site`、`registration`、`github`、`ai`、`storage` 之一（未知分类是带 request_id 的统一 404 HTML）；游客都重定向到 `/login`，普通读者都得到 403 HTML 页。后台页面渲染后台自己的导航（桌面为带文字的左栏，移动端为底部三条），**不**渲染前台的图标条与移动端导航；设置页顶部那一排标签是五个分类之间唯一的通路，每个分类页的表单只提交自己那几个字段。
-- 已登录时（站长与读者都有）左栏底部与移动端顶栏各渲染一个 `[data-logout]` 按钮，`app.js` 用它发出 `POST /api/v1/auth/logout`，成功后跳回 `/` 让服务端重新渲染游客外壳；游客的页面里这两个按钮都不存在。两处落点是必需的：左栏在 700px 以下 `display:none`，顶栏在 700px 以上 `display:none`，只留一处在某一个宽度区间里就点不到。这一步**没有无脚本回退**：CSRF 令牌只走 `X-CSRF-Token` 请求头（`guardUnsafeMethods` 只读该头），普通表单提交取不到它，服务端会按设计返回 403 `csrf_invalid`；结束会话不能做成 `GET` 链接，否则任意第三方页面用一个图片标签就能把访客登出。
+- `GET /admin` 站长管理入口，303 跳转到 `/admin/settings`，再 303 到第一个设置分类 `/admin/settings/site`；游客重定向到 `/login`，普通读者得到 403 HTML 页。左栏账号区对站长渲染一个指向 `/admin` 的入口，游客与读者的页面里没有这段 DOM；移动端顶栏用同样只对站长可见的图标按钮承担同一入口。
+- `GET /admin/comments` 与 `GET /admin/settings/{section}` 是站长页面，`{section}` 取 `site`、`registration`、`github`、`ai`、`storage` 之一（未知分类是带 request_id 的统一 404 HTML）；游客都重定向到 `/login`，普通读者都得到 403 HTML 页。后台页面渲染后台自己的导航（桌面为带文字的左栏，移动端为底部三条），**不**渲染前台的侧栏与移动端导航；设置页顶部那一排标签是五个分类之间唯一的通路，每个分类页的表单只提交自己那几个字段。
+- 已登录时（站长与读者都有）左栏底部与移动端顶栏各渲染一个 `[data-logout]` 按钮，`app.js` 用它发出 `POST /api/v1/auth/logout`，成功后跳回 `/` 让服务端重新渲染游客外壳；游客的页面里这两个按钮都不存在。两处落点是必需的：侧栏在 899px 以下 `display:none`，顶栏在 899px 以上 `display:none`，只留一处在某一个宽度区间里就点不到。这一步**没有无脚本回退**：CSRF 令牌只走 `X-CSRF-Token` 请求头（`guardUnsafeMethods` 只读该头），普通表单提交取不到它，服务端会按设计返回 403 `csrf_invalid`；结束会话不能做成 `GET` 链接，否则任意第三方页面用一个图片标签就能把访客登出。
 - 未知页面返回带 request_id 的统一 404；API 永远不返回 HTML 错误页。
 
 品牌与头像：

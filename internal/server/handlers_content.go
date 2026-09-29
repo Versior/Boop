@@ -168,8 +168,10 @@ type feedTab struct {
 }
 
 // authorHeader is the block at the top of the feed: the cover image, the big
-// avatar and the one-line bio. It is the site's front door rather than a user
-// profile - Boop has a single author and no follow graph (docs/PRODUCT.md §7).
+// avatar, the one-line bio and the two dates the site actually has. It is the
+// site's front door rather than a user profile - Boop has a single author and no
+// follow graph (docs/PRODUCT.md §7), so there is nothing here to count up the
+// way a profile counts followers.
 type authorHeader struct {
 	// Show is false on a "load more" page, so the header appears once, where
 	// the feed starts, instead of above every additional page.
@@ -178,6 +180,14 @@ type authorHeader struct {
 	Name     string
 	Avatar   string
 	Bio      string
+	// Since and Updated date the site: the first and the most recent post the
+	// feed lists, already formatted in the site timezone, with the stored value
+	// kept for the datetime attribute. A site with nothing published yet leaves
+	// both empty, and the line is not rendered at all.
+	Since      string
+	SinceISO   string
+	Updated    string
+	UpdatedISO string
 }
 
 // feedView drives the home page: the cards, the cursor that continues them and
@@ -273,6 +283,17 @@ func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view.Tabs = feedTabs(filter, counts)
+	// The dates date the site, so they are read only where the header is drawn.
+	// A cursor page leaves them zero and the header out of the DOM.
+	if view.Header.Show {
+		span, err := content.PublishedSpan(r.Context(), s.db)
+		if err != nil {
+			s.writeContentFailure(w, r, "published span", err)
+			return
+		}
+		view.Header.SinceISO, view.Header.Since = siteDate(span.First, location)
+		view.Header.UpdatedISO, view.Header.Updated = displayTime(span.Last, location)
+	}
 	for _, post := range page.Posts {
 		card := s.cardOf(post, location)
 		card.CanReact = viewer.signedIn
@@ -545,6 +566,22 @@ func displayTime(stamp string, location *time.Location) (string, string) {
 	default:
 		return stamp, local.Format("2006年1月2日")
 	}
+}
+
+// siteDate formats a stored timestamp as a full calendar date in the site
+// timezone, keeping the machine-readable value for the datetime attribute. The
+// author header dates the site with it, where the year is part of the fact;
+// displayTime drops the year for anything recent, which would turn "started in
+// March" into "started on the 14th".
+func siteDate(stamp string, location *time.Location) (string, string) {
+	if stamp == "" {
+		return "", ""
+	}
+	parsed, err := time.Parse(content.TimestampFormat, stamp)
+	if err != nil {
+		return "", stamp
+	}
+	return stamp, parsed.In(location).Format("2006年1月2日")
 }
 
 func loadLocation(name string) *time.Location {
