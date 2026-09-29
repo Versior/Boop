@@ -1,4 +1,4 @@
-{{define "title"}}{{if .Title}}{{.Title}} · {{.SiteName}}{{else}}{{.SiteName}}{{end}}{{end}}
+{{define "title"}}{{.Meta.DocumentTitle .SiteName}}{{end}}
 {{define "content"}}
     <article class="post post-detail" data-type="{{.Card.Type}}">
       {{template "avatar" .OwnerAvatar}}

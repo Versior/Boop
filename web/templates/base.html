@@ -6,7 +6,25 @@
 <meta name="color-scheme" content="light dark">
 {{if .CSRFToken}}<meta name="csrf-token" content="{{.CSRFToken}}">{{end}}
 <title>{{block "title" .}}{{.SiteName}}{{end}}</title>
-{{if .SiteDescription}}<meta name="description" content="{{.SiteDescription}}">{{end}}
+{{if .Meta.Description}}<meta name="description" content="{{.Meta.Description}}">{{else if .SiteDescription}}<meta name="description" content="{{.SiteDescription}}">{{end}}
+{{with .Meta}}
+<!-- 规范地址与链接预览。地址由 BOOP_BASE_URL 与服务端路径拼成：查询串被丢掉，
+     所以筛选视图与翻页视图都归到同一个地址，请求 Host 与转发头从不参与。 -->
+<link rel="canonical" href="{{.Canonical}}">
+{{if .NoIndex}}<meta name="robots" content="noindex, nofollow">{{end}}
+<meta property="og:type" content="{{.Type}}">
+<meta property="og:site_name" content="{{$.SiteName}}">
+<meta property="og:url" content="{{.Canonical}}">
+<meta property="og:title" content="{{.DocumentTitle $.SiteName}}">
+{{if .Description}}<meta property="og:description" content="{{.Description}}">{{else if $.SiteDescription}}<meta property="og:description" content="{{$.SiteDescription}}">{{end}}
+{{if .Image}}<meta property="og:image" content="{{.Image}}">{{end}}
+{{if .PublishedAt}}<meta property="article:published_time" content="{{.PublishedAt}}">{{end}}
+{{if .ModifiedAt}}<meta property="article:modified_time" content="{{.ModifiedAt}}">{{end}}
+<meta name="twitter:card" content="{{if .Image}}summary_large_image{{else}}summary{{end}}">
+<!-- 结构化数据是数据块而不是可执行脚本：type 不是 JavaScript MIME 类型，浏览器在 CSP 检查之前就丢弃它，
+     因此 script-src 'self' 不会拦住它；内容由 encoding/json 生成，< > & 与 U+2028/U+2029 已被转义。 -->
+{{if .JSONLD}}<script type="application/ld+json">{{.JSONLD}}</script>{{end}}
+{{end}}
 <link rel="alternate" type="application/rss+xml" title="{{.SiteName}}" href="/feed.xml">
 {{if .SiteIconURL}}<link rel="icon" href="{{.SiteIconURL}}">{{else if .SiteAvatarURL}}<link rel="icon" href="{{.SiteAvatarURL}}">{{else}}<link rel="icon" type="image/svg+xml" href="/static/brand/boop-mark.svg?v={{.StaticVersion}}">{{end}}
 <link rel="stylesheet" href="/static/app.css?v={{.StaticVersion}}">

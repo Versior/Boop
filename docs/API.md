@@ -216,8 +216,18 @@ AI 接口规则：
 
 品牌与头像：
 
-- `site_name`、`site_description`、`site_avatar_url` 注入所有页面的外壳：标题后缀、桌面与移动品牌名、品牌 `aria-label`、搜索框标签与占位符、`meta description`，以及首页可见文案（`sr-only` 标题与底部说明）。页面外壳不再硬编码任何品牌名。
+- `site_name`、`site_description`、`site_avatar_url` 注入所有页面的外壳：标题后缀、桌面与移动品牌名、品牌 `aria-label`、搜索框标签与占位符、默认 `meta description`，以及首页可见文案（`sr-only` 标题与底部说明）。页面外壳不再硬编码任何品牌名。
 - 渲染头像的优先级是 `site_avatar_url` → 站长账号 `users.avatar_url` → 内置 SVG，用于快捷发布、信息流卡片、收藏卡片与内容详情。页面 `<link rel="icon">` 用另一条链：`site_icon_url` → `site_avatar_url` → 内置 SVG 图标，因此标签页图标可以独立于头像配置。两条链互不影响。CSP 的 `img-src` 为 `'self' data: http: https:`，否则配置的绝对地址会被浏览器直接拦掉；脚本、样式与连接仍然是同源（`script-src 'self'`、`connect-src 'self'`）。
 - 展示路径读取设置失败时回退到默认值并写一条告警（页面仍然可用）；而设置表单和写入路径在设置损坏时返回 500 / 4xx，避免把默认值写回去覆盖真实设置。
 - 首页、内容详情、收藏页在已经读过设置时复用同一次读取（只注入外壳），不会为品牌再查一次库。
+
+页面元数据（每个 HTML 页面）：
+
+- 每个页面都带 `<link rel="canonical">`、`og:type`、`og:site_name`、`og:url`、`og:title`、`og:description`、`twitter:card`；详情页另有 `article:published_time` 与 `article:modified_time`。索引页另有 `og:image`（`site_avatar_url` → `site_icon_url`，取到了就让 `twitter:card` 变成 `summary_large_image`），详情页只有在**自己**有封面图时才声明 `og:image`，不借站点品牌图然后在结构化数据里声称它是这篇文章的图。
+- 规范地址由 `BOOP_BASE_URL` 加上**百分号编码**的请求路径拼成，**查询串被丢掉**：`/`、`/?type=article`、`/?type=photo`、`/?cursor=...` 全部归到 `/`。它们渲染同一个 `<title>` 与同一批卡片，只是顺序或筛选不同，为一份文档声明多个地址只会分散抓取信号；`cursor` 更是能按翻页生成无限多个 URL。请求 Host 与 `X-Forwarded-*` 从不参与，否则伪造头就能让本进程对外宣告别人的源站。
+- `<title>` 与 `og:title` 由同一个 `pageMeta.DocumentTitle` 方法生成，不会各写一套而漂移。详情页两者优先用 `posts.seo_title`，而可见的 `<h1>` 仍用真实标题：为搜索结果挑的措辞不一定是页面该显示的措辞。
+- 描述优先 `posts.seo_description`，否则摘要，否则正文里**读者能看到的文本**。文章正文走的是与 RSS 描述同一条 goldmark + bluemonday 管线：把已被净化掉的 `<script>` 先还原成摘要文本再发出来，等于把写入时清掉的内容又放回机器可读副本里；标题回退同样取可见文本，所以 `## 小标题` 不会连着井号一起进 `<h1>`。
+- 结构化数据是 `<script type="application/ld+json">` 数据块：首页是 `WebSite`（搜索引擎据此取站点名），文章是 `BlogPosting`，动态与摄影是 `SocialMediaPosting`——Google 的 Article 指引明确要求不是文章的内容不要标记成文章，schema.org 也为“信息流里的帖文”提供了这个子类型。
+- 该数据块**不受 `script-src 'self'` 限制**，也不需要 nonce 或 `unsafe-inline`：HTML 规范在 “prepare the script element” 里先按 `type` 判定脚本类型，不是 JavaScript MIME 类型的元素会在此之前直接返回，而 CSP 的内联检查发生在其后的步骤，因此浏览器把它当作纯数据块，根本走不到 CSP 检查。内容由 `encoding/json` 生成，`<`、`>`、`&` 与 U+2028/U+2029 已转义为 `\uXXXX`，所以标题里写 `</script>` 也闭合不了该元素。
+- `/search`、`/bookmarks`、`/login`、`/register`、`/admin*` 带 `<meta name="robots" content="noindex, nofollow">`。这些路径同时被 robots.txt 排除：规则让守规矩的爬虫省下一次请求，noindex 覆盖不守规矩的。
 

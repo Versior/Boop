@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -23,6 +24,10 @@ const uploadsPrefix = "/uploads/"
 const (
 	contentJSONBytes = 512 << 10
 	postPagePrefix   = "/p/"
+	// summaryRunes bounds the description a detail page publishes in its head.
+	// It matches the RSS description bound, so the two machine-readable copies
+	// of a post summarise it the same way.
+	summaryRunes = 300
 )
 
 // typeLabels maps a post type to its Chinese chip label.
@@ -219,6 +224,7 @@ func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
 	// The author status card belongs to the home page only: every other page
 	// leaves the shared field zero, so no other render path touches the AI cache.
 	view.AIStatus = authorStatusPayloadOf(s.authorStatus(r.Context(), values))
+	s.indexMetadata(r, &view, values)
 	s.render(w, r, http.StatusOK, "home", view)
 }
 
@@ -260,16 +266,44 @@ func (s *server) handlePostPage(w http.ResponseWriter, r *http.Request) {
 		OwnerName:       ownerName,
 		OwnerAvatar:     ownerAvatar,
 	}
+	// The visible summary of the post is computed once and reused: the head, the
+	// title fallback and the link preview all describe the same text.
+	plain, err := postPlainText(*post)
+	if err != nil {
+		// Only the summary is missing: the row, the body and the counters are
+		// already in hand, so a warning beats failing a page that renders fine.
+		s.logger.LogAttrs(r.Context(), slog.LevelWarn, "post summary failed",
+			slog.String("slug", post.Slug), slog.String("error", err.Error()),
+			slog.String("request_id", requestIDFrom(r.Context())))
+	}
 	if view.Title == "" {
-		view.Title = firstLine(post.BodyMarkdown)
+		view.Title = firstLine(plain)
 	}
 	view.Description = post.Excerpt
 	if view.Description == "" {
-		view.Description = firstLine(post.BodyMarkdown)
+		view.Description = clampRunes(oneLine(plain), summaryRunes)
 	}
 	view.Location = post.Location
 	view.CapturedLabel = card.CapturedLabel
+	s.postingMetadata(r, &view, post, ownerName)
 	s.render(w, r, http.StatusOK, "post", view)
+}
+
+// postPlainText is the text a reader of this post actually sees. An article body
+// goes through the same Markdown pipeline the RSS description uses, because both
+// are machine-readable copies of the post and neither may put back what the
+// sanitizer removed from the body: without this, an article whose first line is
+// a raw tag would publish that tag as its summary, and a heading would publish
+// its "#" markers. A moment or a photo caption is stored as plain text already.
+func postPlainText(post content.Post) (string, error) {
+	if post.Type != content.TypeArticle {
+		return post.BodyMarkdown, nil
+	}
+	text, err := content.MarkdownPlainText(post.BodyMarkdown)
+	if err != nil {
+		return "", fmt.Errorf("post plain text: %w", err)
+	}
+	return text, nil
 }
 
 // handlePostsAPI serves the public feed as JSON.

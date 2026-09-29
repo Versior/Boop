@@ -279,6 +279,13 @@ func TestStaticVersionReachesEveryAssetURL(t *testing.T) {
 	if strings.Contains(body, `href="/static/app.css"`) || strings.Contains(body, `src="/static/app.js"`) {
 		t.Error("shell references a static asset without the version query")
 	}
+
+	// The hand-built status page is the second place a static URL is written, and
+	// a browser that only ever saw it there would pin that URL for a year.
+	missing := do(t, testServer(t, discardLogger()).handler(), http.MethodGet, "/no-such-page", nil).Body.String()
+	if !strings.Contains(missing, `/static/app.css?v=`+version) {
+		t.Errorf("status page does not version its stylesheet:\n%s", missing)
+	}
 }
 
 func TestStaticBundleCoversEveryEmbeddedAsset(t *testing.T) {

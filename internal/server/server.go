@@ -210,6 +210,9 @@ type pageView struct {
 	// immutable for a year, so the version is what a deploy changes to move
 	// returning visitors off the previous bytes.
 	StaticVersion string
+	// Meta is the document-level metadata: the canonical address, the link
+	// preview and, on the pages that carry one, the structured data.
+	Meta pageMeta
 	// AIStatus is the author status card of the home right rail. It stays zero on
 	// every other page, so the shared shell renders no card outside the home page
 	// and no other page ever reads the AI cache.
@@ -234,6 +237,7 @@ func (s *server) shellViewWithSettings(r *http.Request, filter string, values se
 		SiteAvatarURL:   values.SiteAvatarURL,
 		SiteIconURL:     values.SiteIconURL,
 		StaticVersion:   staticAssets().version,
+		Meta:            s.pageMetaOf(r),
 	}
 	if state, ok := authStateFrom(r.Context()); ok && state.authenticated {
 		view.CSRFToken = state.session.CSRFToken
@@ -328,7 +332,10 @@ func writeStatusPage(w http.ResponseWriter, status int, message, requestID strin
 		"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
 		"<meta name=\"color-scheme\" content=\"light dark\">" +
 		"<title>" + escape(http.StatusText(status)) + "</title>" +
-		"<link rel=\"stylesheet\" href=\"/static/app.css\"></head><body>" +
+		// The version query is what keeps a one-year immutable cache honest, so
+		// this page needs it too: an unversioned /static/app.css would be pinned
+		// in a browser that only ever saw it here.
+		"<link rel=\"stylesheet\" href=\"/static/app.css?v=" + staticAssets().version + "\"></head><body>" +
 		"<main class=\"status-page\"><h1>" + escape(http.StatusText(status)) + "</h1>" +
 		"<p>" + escape(message) + "</p>" +
 		"<p class=\"status-id\">request_id " + escape(requestID) + "</p>" +
