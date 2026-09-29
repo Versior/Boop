@@ -80,6 +80,17 @@ func openStore(logger *slog.Logger) (config.Config, *sql.DB, error) {
 	return cfg, db, nil
 }
 
+// uploadsDescription says where uploads are kept, named by the two things an
+// operator needs in order to reason about backups: which backend, and which
+// bucket or directory. The credentials are never part of it.
+func uploadsDescription(cfg config.Config) string {
+	object := cfg.ObjectStorage()
+	if !object.Enabled() {
+		return "local"
+	}
+	return "bucket " + object.Bucket + " read from " + object.PublicURL
+}
+
 func runServer() error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -117,6 +128,7 @@ func runServer() error {
 			slog.String("addr", cfg.Addr),
 			slog.String("base_url", cfg.BaseURL),
 			slog.String("data_dir", cfg.DataDir),
+			slog.String("uploads", uploadsDescription(cfg)),
 		)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serveErr <- err

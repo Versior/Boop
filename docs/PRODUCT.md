@@ -7,7 +7,7 @@ Boop 是面向个人站长的轻量自托管博客：公开页面保留 X/Twitte
 ## 2. 成功标准
 
 - 1 核 512MB 可稳定运行单实例，推荐 1GB。
-- 单个 Go 二进制 + SQLite + 本地上传目录即可部署，无 Node 运行时、Redis、消息队列。
+- 单个 Go 二进制 + SQLite + 本地上传目录即可部署，无 Node 运行时、Redis、消息队列；上传目录可以换成兼容 S3 的对象存储（见 `docs/STORAGE.md`），换了也不会改变这条：仍然是同一个二进制、同一个 SQLite、同一个进程。
 - 首页首屏 SSR；关闭 JavaScript 后仍能阅读文章、摄影和动态。
 - 空闲 RSS 目标小于 100MB；缓存命中时首页服务端响应目标 p95 小于 100ms。
 - 管理员能在首页直接发布动态、文章或摄影，无需进入复杂后台。
@@ -84,14 +84,15 @@ Boop 是面向个人站长的轻量自托管博客：公开页面保留 X/Twitte
 - 站点名称、简介、头像、图标、时区、每页条数。名称与头像会真实用于页面品牌（标题后缀、导航品牌、搜索占位、首页文案）与内容头像，头像留空时依次回退到站长账号头像、内置图标。图标是浏览器标签页图标，与头像分开配置，留空时依次回退到站点头像、内置图标。
 - GitHub OAuth Client ID/Secret。
 - AI Base URL、模型、加密 API Key、状态缓存天数。
-- 上传目录、单文件大小和允许的 MIME 类型由环境变量控制，不在网页端任意改路径。
+- 上传目录、单文件大小和允许的 MIME 类型由环境变量控制，不在网页端任意改路径。上传目录既可以是本地目录，也可以是兼容 S3 的对象存储；这是部署事实，因此同样只走环境变量（`BOOP_R2_*`）。
 
 ## 7. 非目标
 
 - 不做关注、转发、私信、用户发帖、多人协作发布。
 - 不引入 Redis、Elasticsearch、独立前端 SPA、任务队列或微服务。
+- 不引入 AWS SDK：对象存储只用到 PutObject 与 DeleteObject 两个操作，用标准库手写 SigV4 即可，不为此增加十来个模块。
 - 不要求邮件验证、邮件找回密码或邮件通知；需要时再增加 SMTP 子系统。
-- v0.1 不做 S3、多实例横向扩展、视频转码和在线图片编辑。
+- v0.1 不做多实例横向扩展、视频转码和在线图片编辑。
 
 ## 8. 技术与运行约束
 
@@ -114,4 +115,18 @@ Boop 是面向个人站长的轻量自托管博客：公开页面保留 X/Twitte
 | `BOOP_SECURE_COOKIES` | `false` | HTTPS 部署必须为 true |
 | `BOOP_MAX_UPLOAD_MB` | `10` | 单文件上限 |
 | `BOOP_LOG_LEVEL` | `info` | debug/info/warn/error |
+
+对象存储（可选，全部留空则上传保存在 `BOOP_DATA_DIR`）：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `BOOP_R2_ENDPOINT` | 无 | S3 API 地址，R2 为 `https://<account-id>.r2.cloudflarestorage.com` |
+| `BOOP_R2_BUCKET` | 无 | 存储桶名 |
+| `BOOP_R2_ACCESS_KEY_ID` | 无 | R2 API Token 的 Access Key ID |
+| `BOOP_R2_SECRET_ACCESS_KEY` | 无 | R2 API Token 的 Secret Access Key |
+| `BOOP_R2_PUBLIC_URL` | 无 | 读取对象的主机名：R2 自定义域名或桶的 `r2.dev` 地址 |
+| `BOOP_R2_REGION` | `auto` | 签名区域，R2 使用 `auto` |
+| `BOOP_R2_PREFIX` | 无 | 桶内的键前缀，例如 `uploads` |
+
+前五个只要设置了任意一个，就全部必填：半配置的对象存储会让进程在启动时报出缺失的变量，而不是在当天第一次上传时才失败。
 
