@@ -14,6 +14,9 @@
 | GET | `/api/v1/search?q=&cursor=&limit=` | SQLite FTS 关键词搜索，返回 `{"data":[...],"next_cursor":"..."}` |
 | GET | `/api/v1/ai/author-status` | 作者状态缓存：text、topics、generated_at、stale、default；只读缓存，不同步调用模型 |
 | GET | `/feed.xml` | RSS 2.0，最新 50 条已发布内容 |
+| GET | `/robots.txt` | 抓取规则与 sitemap 声明，绝对地址只由 `BOOP_BASE_URL` 生成 |
+| GET | `/sitemap.xml` | 首页 + **每一条**已发布内容，逐条带 `lastmod` |
+| GET | `/static/*` | 嵌入的 CSS/JS/SVG；带内容版本号，一年不可变缓存 + gzip 协商 |
 
 ## 搜索与 RSS
 
@@ -36,6 +39,36 @@ RSS 规则（`GET /feed.xml`，公开）：
 - `description` 是**真正的纯文本**且自动 XML 转义：有摘要时用摘要（摘要本身按纯文本处理），否则渲染正文——文章正文经与存储 `body_html` 相同的 goldmark + bluemonday 流水线渲染后只取可见文本（标题号、`**粗体**` 标记、链接目标、代码围栏与原始 HTML 都不会出现），动态与摄影正文本身就是纯文本，只折叠为单行。**不输出 `body_html`，也不提供 `content:encoded`**。
 - 绝对链接只由 `BOOP_BASE_URL` 生成，永远不读请求 Host 或转发头。
 - 其它方法返回 405 且带 `Allow: GET`；XML 路径不返回 JSON 错误信封。
+
+## 抓取与发现文档
+
+`GET /robots.txt` 与 `GET /sitemap.xml` 是给爬虫的纯文本与 XML 文档，都不返回 JSON 信封。
+
+`robots.txt` 规则：
+
+- 输出 `User-agent: *`、`Allow: /` 和一组 `Disallow`：`/admin`、`/api/`、`/auth/`、`/search`、`/bookmarks`、`/login`、`/register`。规则按最长前缀匹配，所以一条 `Allow: /` 就让其余路径都可抓，只有这几条留在外面。
+- `/search` 被排除，是因为它的结果集随查询串无限展开，且每次抓取都要跑一次全文检索；`/bookmarks` 是逐访客的页面，对爬虫没有意义。
+- `Sitemap:` 必须是绝对地址，只由 `BOOP_BASE_URL` 生成，**永不**读请求 Host 或 `X-Forwarded-*`：否则任何能发请求的人都能让本进程向所有爬虫宣告别人的源站。
+
+`sitemap.xml` 规则：
+
+- 文档为 sitemap 0.9，`<urlset>` 带 `xmlns`，内容是**首页 + 每一条已发布且未删除的内容**，契约与公共信息流一致（`status='published' AND deleted_at IS NULL`）。只列首页而没有内容的 sitemap 比没有更糟：信任它的爬虫永远不会知道内容存在。
+- 查询是一条只读 `slug, updated_at` 的窄查询，按 `published_at DESC, id DESC` 排序——与 RSS 用同一个免 `COALESCE` 的顺序，直接由 `idx_posts_feed` 满足，不产生临时 B-tree。单份 sitemap 最多 50000 条 URL（协议上限），所以这是一个有界查询。
+- 每条内容带自己的 `lastmod`（取 `updated_at`，UTC 的 W3C datetime），因此编辑过的内容会被重新抓取，而不必让整份文件看起来全新。
+- 首页条目**不带** `lastmod`：首页只渲染最新一页内容，没有任何单个存储时间戳能描述它何时变化，随便填一个都是过度或不足声明。
+- `/?type=article` 与 `/?type=photo` 这两个筛选视图**不**单独列入：它们是首页的子集，而且从首页一次点击就能到达，列进去只会给爬虫增加与首页高度重复的 URL。
+- 时间戳无法解析时**省略** `lastmod` 元素，而不是输出空元素——空元素会让文档非法。
+- 两个路径的非 GET 请求都被本进程回答为 405 并带 `Allow: GET`；但不带 Origin/Referer 的写请求会先被同源守卫拦成 403 `origin_required`，这与 `/feed.xml` 的处理一致。
+
+## 静态资源
+
+- `web/static` 在首次请求时一次性编译成 bundle：原始字节、gzip 副本（仅当压缩后确实更小）与**每种表示各自的**强 ETag，用 `sync.OnceValue` 记忆；编译是嵌入字节的纯函数，因此记忆化不影响正确性。
+- 响应带 `Cache-Control: public, max-age=31536000, immutable` 和 `Vary: Accept-Encoding`。两种表示的 ETag 必须不同（`"<sha256>"` 与 `"<sha256>-gzip"`）：共用一个标签会让共享缓存把 gzip 字节发给只要明文的客户端，因为缓存正是拿 ETag 当重验证键的。
+- `embed.FS` 没有修改时间，所以不输出 `Last-Modified`，ETag 是唯一校验器。它是**实际发出的字节**的 sha256，这也是「不可变」这个声明能成立的前提。`http.ServeContent` 免费提供 `Range` 与 `If-None-Match`。
+- 带 `Range` 的请求**一律回落到明文表示**：字节范围作用于「被选中的表示」，切一段 gzip 流会让客户端拿到无法解压的字节；而 `Accept-Encoding` 只是偏好而非要求，所以对这一次请求放弃压缩是安全答案。明文响应由 `ServeContent` 给出 `Content-Length` 与 `Content-Range`。
+- 压缩响应显式写出自己的 `Content-Length`（压缩后字节数）：`ServeContent` 对有 `Content-Encoding` 的响应不填长度，否则这一条会退化成 chunked。
+- 每个 `/static` URL 都带内容派生的版本号（12 位十六进制，覆盖所有资源的文件名与摘要），一年缓存因此安全：发版改版本号，URL 跟着变，回访者不会被钉在旧字节上。新增模板里的静态引用必须带上这个 query。
+- `gzip;q=0` 与 `*;q=0` 是明确拒绝而不是缺省，会被尊重；`q` 缺失或无法解析按 RFC 9110 视为 1。
 
 ## 认证
 

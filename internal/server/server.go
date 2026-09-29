@@ -118,6 +118,12 @@ func (s *server) handler() http.Handler {
 	// A non-GET /feed.xml is answered by this process rather than by ServeMux
 	// plain text, so the 405 always carries an Allow header.
 	mux.HandleFunc("/feed.xml", s.handleFeedMethodFallback)
+	// The discovery documents a crawler looks for at the root. Their absolute
+	// links come from BOOP_BASE_URL and never from the request.
+	mux.HandleFunc("GET /robots.txt", s.handleRobots)
+	mux.HandleFunc("/robots.txt", s.handleSEOMethodFallback)
+	mux.HandleFunc("GET /sitemap.xml", s.handleSitemap)
+	mux.HandleFunc("/sitemap.xml", s.handleSEOMethodFallback)
 	mux.HandleFunc("GET /bookmarks", s.handleBookmarksPage)
 	mux.HandleFunc("GET /admin", s.handleAdminIndex)
 	mux.HandleFunc("GET /admin/settings", s.handleAdminSettingsPage)
