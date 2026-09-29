@@ -195,9 +195,13 @@
 
 
 <!-- ========== 移动端固定底部导航 ========== -->
+<!-- 顺序与左栏图标条一致，搜索入口与左栏同样是 /search。 -->
 <nav class="bottom-nav" aria-label="移动端导航">
   <a class="{{if eq .Filter ""}}on{{end}}" href="/"{{if eq .Filter ""}} aria-current="page"{{end}}>
     <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-home"/></svg><span>首页</span>
+  </a>
+  <a class="{{if eq .Filter "search"}}on{{end}}" href="/search"{{if eq .Filter "search"}} aria-current="page"{{end}}>
+    <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg><span>搜索</span>
   </a>
   <a class="{{if eq .Filter "article"}}on{{end}}" href="/?type=article"{{if eq .Filter "article"}} aria-current="page"{{end}}>
     <svg class="ic ic-nav" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-article"/></svg><span>文章</span>

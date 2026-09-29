@@ -268,6 +268,9 @@ h1,h2,h3,p{margin:0}
   border-radius:var(--r-md);
   background:var(--bg-soft);
 }
+/* 详情页里的照片就是内容本身，不再按 8/5 裁切：被裁掉的那部分正是读者点进来看的。
+   信息流卡片保留统一比例，那里它只是一个列表缩略图。 */
+.post-detail .photo-art{aspect-ratio:auto;object-fit:contain}
 .photo-caption{
   display:flex;align-items:center;gap:6px;flex-wrap:wrap;
   margin-top:8px;

@@ -89,8 +89,12 @@ func TestSearchPageStatesAndActiveNav(t *testing.T) {
 		if !strings.Contains(body, `class="nav-item on" href="/search" aria-current="page"`) {
 			t.Error("the 搜索 nav item is not marked current on /search")
 		}
-		if got := strings.Count(body, `aria-current="page"`); got != 1 {
-			t.Errorf("active navigation items = %d, want 1", got)
+		// Both navigation bars mark the current section, exactly as they do on
+		// the feed: the desktop rail and the mobile bottom bar. While the bottom
+		// bar had no search entry this counted one, which is what left a phone
+		// with nothing highlighted on this page.
+		if got := strings.Count(body, `aria-current="page"`); got != 2 {
+			t.Errorf("active navigation items = %d, want 2", got)
 		}
 	})
 

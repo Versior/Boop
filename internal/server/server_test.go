@@ -185,6 +185,7 @@ func TestHomeRendersEmbeddedShell(t *testing.T) {
 		`<link rel="icon" type="image/svg+xml" href="/static/brand/boop-mark.svg?v=` + staticAssets().version + `">`,
 		`<script src="/static/app.js?v=` + staticAssets().version + `"></script>`,
 		`action="/search"`,
+		`href="/search"`,
 		`href="/?type=article"`,
 		`href="/?type=photo"`,
 		`href="/bookmarks"`,
