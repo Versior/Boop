@@ -158,17 +158,28 @@ h1,h2,h3,p{margin:0}
   border-radius:11px;
   background:var(--mark-bg);color:var(--mark-fg);
 }
-/* 品牌名是这一栏唯一的可见文字，所以它得自己撑起「刊头」这层意思：衬线体、一点点字距，
-   比无衬线加粗更像一本刊物的名字。字体全部取自系统已有的衬线——macOS 的 Songti SC /
-   Didot、Windows 的 SimSun、Android 的 Noto Serif CJK，**不下载任何字体文件**：
-   站点名是站长自己填的任意文本，自托管的 CJK 字体只能整包（5MB 起），
-   对一个 1 核 500MB 的项目不划算；拉丁部分先挑 Didot / Bodoni 这类高对比衬线。 */
+/* 品牌名是这一栏唯一的可见文字，要自己撑起「刊头」这层意思。字体全部取自系统已有的衬线
+   （macOS 的 Didot / Bodoni 72 / Songti SC、Windows 的 Georgia / SimSun、Android 的
+   Noto Serif CJK），**不下载任何字体文件**：站点名是站长自己填的任意文本，自托管的 CJK
+   字体只能整包（5MB 起），对一个 1 核 500MB 的项目不划算。
+
+   **字号不是随手定的**：高对比衬线的细笔画在 19px 上只有约 0.7 个像素，屏幕把它抹掉之后
+   整行字看上去是发虚、发灰的——「高级」在字面上就是笔画的确定性，发虚立刻显廉价。
+   23px 让细笔画回到 1px 以上，同时粗笔画（约 2.5px）正好等于标记那根单线在 34px 方块里的
+   实际粗细（1.8/24 × 34 ≈ 2.55px），字与标记因此落在同一个笔画重量上。 */
 .brand-name{
-  font-family:"Didot","Bodoni 72","Iowan Old Style","Palatino Linotype",
-    Georgia,"Songti SC","STSong","Source Han Serif SC","Noto Serif CJK SC",
-    "SimSun",serif;
-  font-size:19px;font-weight:600;letter-spacing:.01em;line-height:1.2;
+  font-family:"Didot","Bodoni 72","Bodoni 72 Oldstyle","Iowan Old Style",
+    "Palatino Linotype",Georgia,"Songti SC","STSong","Source Han Serif SC",
+    "Noto Serif CJK SC","SimSun",serif;
+  font-size:23px;font-weight:700;letter-spacing:-.005em;line-height:1.15;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+/* 标记里那颗蓝点是它唯一的彩色记号，这里把同一颗点接到品牌名末尾——用伪元素而不是写进
+   文字，所以站长把站名改成任何别的字，这一点都还在。两处合起来才像同一套记号。 */
+.brand-name::after{
+  content:"";display:inline-block;
+  width:5px;height:5px;border-radius:50%;
+  background:var(--accent);margin-left:3px;vertical-align:.16em;
 }
 
 .nav{display:flex;flex-direction:column;gap:2px;width:100%}
@@ -254,7 +265,7 @@ h1,h2,h3,p{margin:0}
 }
 .tb-brand{display:flex;align-items:center;gap:9px;border-radius:999px}
 .tb-brand .brandmark{width:34px;height:34px;flex:0 0 34px;border-radius:10px}
-.tb-brand .brand-name{font-size:18px}
+.tb-brand .brand-name{font-size:21px}
 .tb-actions{
   display:flex;align-items:center;gap:5px;
   flex:0 0 auto;margin-left:auto;
