@@ -200,9 +200,8 @@
   </aside>
   {{else}}
   <!-- ========== 左栏 ========== -->
-  <!-- 左栏是图标栏：最上面是品牌（出厂名画字标，改名后是标记 + 名字），中间是四个内容目的地，
-       最下面是控件组。导航**不带文字**，每一项的文字留在无障碍树里（.sr-only）并另带 title
-       提示，读屏与鼠标都还知道那是什么；只有品牌是可见的，因为「这是哪个站」不属于图标能表达的事。
+  <!-- 左栏只显示图标：最上面是品牌标记，中间是四个内容目的地，最下面是控件组。
+       每一项的文字留在无障碍树里（.sr-only）并另带 title，读屏与鼠标仍然知道它是什么。
 
        这里**只列内容视图**：首页是全部内容，文章与摄影是信息流自己的两个筛选，收藏是只属于
        这一站的短名单——四个都是「看什么」，一样高、一样宽。外观是个开关而不是页面；「我的」
@@ -211,7 +210,7 @@
   <aside class="rail-left" data-rail>
     <div class="rail-top">
       <a class="brand" href="/" aria-label="{{.SiteName}} 首页">
-        {{template "brand-mark" .}}{{template "brand-type" .}}
+        <span class="brandmark" aria-hidden="true"><svg class="ic ic-logo" viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
       </a>
       <nav class="nav" aria-label="主导航">
         <a class="nav-item{{if eq .Filter ""}} on{{end}}" href="/"{{if eq .Filter ""}} aria-current="page"{{end}} title="首页">

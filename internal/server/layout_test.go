@@ -168,17 +168,10 @@ func TestDetailPhotoIsNotCropped(t *testing.T) {
 	}
 }
 
-// The left rail is an icon rail with exactly one visible brand block in it: the
-// site's name, drawn as a wordmark while the name is still the one the project
-// ships with and set in type once the owner renames it. It used to be a 68px
-// strip of seven identical circles with that name hidden, and three of the seven
-// were not destinations at all - a theme switch, a second copy of that switch,
-// and a link to /login that is a no-op for anyone already signed in. This pins
-// the shape it has now: four destinations, the switch and the account entries in
-// a control group below them, and the brand block left visible. The stylesheet
-// is read at the end because visibility is CSS's job and "no brand name next to
-// the logo" was a CSS bug.
-func TestTheFrontRailNamesTheBrandAndKeepsFourDestinations(t *testing.T) {
+// The front rail is a compact icon-only strip: one brand mark, four content
+// destinations, then theme and account controls. Labels stay available to
+// assistive technology and mouse users through hidden text and title attributes.
+func TestTheFrontRailUsesOnlyIconsAndKeepsFourDestinations(t *testing.T) {
 	f := newContentFixture(t)
 
 	page := func(cookie *http.Cookie) string {
@@ -190,40 +183,19 @@ func TestTheFrontRailNamesTheBrandAndKeepsFourDestinations(t *testing.T) {
 		return markupBlock(t, page(cookie), `data-rail`, "</aside>")
 	}
 
-	// The brand has two faces, and this pins which one shows. While the name is
-	// still the shipped one the shell draws it as a vector wordmark; a wordmark
-	// is a drawing of one specific word, so the moment the owner renames the site
-	// it has to go back to type. Both faces are asserted, in that order, because
-	// the fallback is the half that can rot unnoticed: the shipped name is what
-	// every other test and every screenshot sees.
 	guest := rail(nil)
 	for _, want := range []string{
-		`<svg class="wordmark"`,
-		`<span class="sr-only">Boop</span>`,
+		`class="brandmark"`,
 		`data-theme-toggle`,
 	} {
 		if !strings.Contains(guest, want) {
 			t.Errorf("the rail is missing %s:\n%s", want, guest)
 		}
 	}
-	if strings.Contains(guest, `class="brand-name"`) {
-		t.Error("the rail sets the shipped name in type instead of drawing it")
-	}
-	// The square mark never appears beside the wordmark: a drawing carries its
-	// own letterforms, so a block stamped with a "b" in front of it starts the
-	// same word twice.
-	if strings.Contains(guest, `class="brandmark"`) {
-		t.Error("the rail puts the square mark in front of the wordmark")
-	}
-	// The wordmark is drawn from a sprite symbol reached through <use>, and that
-	// only works while the symbol's viewBox starts at 0 0. A <use> drops the
-	// symbol's content into a viewport anchored at the outer coordinate system's
-	// origin, so a viewBox with a non-zero origin moves the whole drawing outside
-	// the visible area. Nothing about the markup looks wrong when that happens -
-	// the brand simply renders as blank space, which is exactly what this pins.
-	// Every other symbol in the sprite is 0 0 for the same reason.
-	if !strings.Contains(page(nil), `<symbol id="i-wordmark" viewBox="0 0 `) {
-		t.Error("the wordmark symbol has a non-zero viewBox origin, which hides it when drawn through <use>")
+	for _, unwanted := range []string{`class="wordmark"`, `class="brand-name"`} {
+		if strings.Contains(guest, unwanted) {
+			t.Errorf("the icon-only rail still renders brand text %s:\n%s", unwanted, guest)
+		}
 	}
 	nav := navBlock(t, guest, "nav")
 	if got := strings.Count(nav, `class="nav-item`); got != 4 {
@@ -254,31 +226,7 @@ func TestTheFrontRailNamesTheBrandAndKeepsFourDestinations(t *testing.T) {
 		t.Error("a signed-in session is still offered the sign-in page")
 	}
 
-	// The other face. Renaming the site has to take the drawing away: leaving it
-	// up would have the page advertise a name that is not this site's.
-	rename := f.do(t, http.MethodPatch, "/api/v1/admin/settings",
-		`{"site_name":"少爷的博客"}`,
-		map[string]string{"Origin": testOrigin, "X-CSRF-Token": f.csrf}, f.cookie)
-	if rename.Code != http.StatusOK {
-		t.Fatalf("patch site_name: status = %d: %s", rename.Code, rename.Body.String())
-	}
-	renamed := rail(f.cookie)
-	if !strings.Contains(renamed, `<span class="brand-name">少爷的博客</span>`) {
-		t.Errorf("a renamed site is still drawn with the shipped wordmark:\n%s", renamed)
-	}
-	if strings.Contains(renamed, `class="wordmark"`) {
-		t.Error("the shipped wordmark is still on the page after the site was renamed")
-	}
-	// Type has no letterforms of its own, so the square mark comes back with it.
-	if !strings.Contains(renamed, `class="brandmark"`) {
-		t.Error("the renamed site has no mark to stand the type beside")
-	}
-
-	// One visible word and only one: the brand, and no text inside the
-	// navigation. Both halves of that were asked for by name ("there is no brand
-	// name next to the logo" / "the navigation takes no text"), so both are
-	// pinned here. Hiding is CSS's job, hence reading the stylesheet: the labels
-	// stay behind in the accessibility tree either way.
+	// Navigation labels remain in the accessibility tree but are visually hidden.
 	css := f.do(t, http.MethodGet, "/static/app.css", "", nil, nil).Body.String()
 	start := strings.Index(css, ".sr-only")
 	if start < 0 {
@@ -290,9 +238,6 @@ func TestTheFrontRailNamesTheBrandAndKeepsFourDestinations(t *testing.T) {
 	}
 	if !strings.Contains(group, ".rail-left .nav-item .label") {
 		t.Errorf("the rail's navigation labels are visible again, and the owner asked for icons only:\n%s", group)
-	}
-	if strings.Contains(group, ".rail-left .brand-name") {
-		t.Errorf("the rail hides its brand name again:\n%s", group)
 	}
 }
 

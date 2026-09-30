@@ -31,10 +31,10 @@ html{-webkit-text-size-adjust:100%}
   --r-lg:16px;
   --r-md:14px;
 
-  /* 三栏栅格：左栏 180 / 主流 600 / 右栏 336 */
+  /* 三栏栅格：前台图标栏 68 / 主流 600 / 右栏 336 */
   --main-w:600px;
   --aside-w:336px;
-  --rail-w:180px;
+  --rail-w:68px;
   /* 后台侧栏的宽度与前台侧栏不同：模块名比目的地名长，需要更宽。 */
   --rail-admin-w:230px;
   --pad:16px;
@@ -126,7 +126,7 @@ h1,h2,h3,p{margin:0}
   height:100vh;height:100dvh;
   display:flex;flex-direction:column;justify-content:space-between;
   gap:16px;
-  padding:14px 14px 16px;
+  padding:14px 12px 16px;
   border-right:1px solid var(--line);
 }
 .rail-right{
@@ -139,16 +139,16 @@ h1,h2,h3,p{margin:0}
 .main{min-width:0;min-height:100vh;min-height:100dvh}
 
 /* ---------- 5. 左栏 ---------- */
-/* 左栏是图标栏：品牌在最上面，四个内容目的地在中间，控件组在最下面，三者都居中。
-   导航**不带文字**——文字留在无障碍树里，鼠标有 title 提示；只有品牌名是可见文字。
+/* 左栏只显示图标：品牌标记在最上面，四个内容目的地在中间，控件组在最下面。
+   文字留在无障碍树与 title 提示里，不占据视觉空间。
    四项而不是七项：外观是开关不是页面，归控件组；「我的」对已登录的人只是空跳转，
    也归控件组，未登录时才出现，并且就叫「登录」。 */
 .rail-top{width:100%}
 .brand{
-  display:flex;align-items:center;justify-content:center;gap:9px;
-  width:100%;min-width:0;
-  padding:7px 8px;margin-bottom:8px;
-  border-radius:14px;
+  display:flex;align-items:center;justify-content:center;
+  width:44px;height:44px;
+  padding:0;margin:0 auto 8px;
+  border-radius:999px;
   transition:background .12s ease;
 }
 .brand:hover{background:var(--hover)}
@@ -158,28 +158,11 @@ h1,h2,h3,p{margin:0}
   border-radius:11px;
   background:var(--mark-bg);color:var(--mark-fg);
 }
-/* 字标是站长给的那份「Boop」绘图，站点名还是出厂名的时候它替掉排版走进来（见 base.html 的
-   brand-type）。它是**黑字**（fill）不是描边，所以不跟 .ic 那套 currentColor 描边走；颜色
-   直接用 --ink，深浅两档主题各自取自己那一份，不必再写一条深色覆盖。viewBox 已经收到字形
-   本身（长宽比 2.65:1），高度交给宽度推，所以只定宽。
-
-   **这里的宽度上限是算出来的**：左栏 180 − 左右各 14（.rail-left 的内边距）= 152，再减
-   .brand 自己的左右各 8 = 136px。超过 136 就会把 .brand 的 flex 撑开、把整条左栏顶歪。
-   其余两处按各自容器另给宽度（顶栏、后台侧栏各一条）。 */
+/* 字标与站名仍用于移动端顶栏和后台侧栏；前台左栏只渲染品牌标记。 */
 .wordmark{
   display:block;width:120px;height:auto;flex:0 0 auto;
   fill:var(--ink);
 }
-/* 另一副面孔：文字。只有站长把站名改成出厂名以外的字之后才会走到这一支。它是这一栏唯一的可见
-   文字，要自己撑起「刊头」这层意思。字体全部取自系统已有的衬线
-   （macOS 的 Didot / Bodoni 72 / Songti SC、Windows 的 Georgia / SimSun、Android 的
-   Noto Serif CJK），**不下载任何字体文件**：站点名是站长自己填的任意文本，自托管的 CJK
-   字体只能整包（5MB 起），对一个 1 核 500MB 的项目不划算。
-
-   **字号不是随手定的**：高对比衬线的细笔画在 19px 上只有约 0.7 个像素，屏幕把它抹掉之后
-   整行字看上去是发虚、发灰的——「高级」在字面上就是笔画的确定性，发虚立刻显廉价。
-   23px 让细笔画回到 1px 以上，同时粗笔画（约 2.5px）正好等于标记那根单线在 34px 方块里的
-   实际粗细（1.8/24 × 34 ≈ 2.55px），字与标记因此落在同一个笔画重量上。 */
 .brand-name{
   font-family:"Didot","Bodoni 72","Bodoni 72 Oldstyle","Iowan Old Style",
     "Palatino Linotype",Georgia,"Songti SC","STSong","Source Han Serif SC",
@@ -187,8 +170,6 @@ h1,h2,h3,p{margin:0}
   font-size:23px;font-weight:700;letter-spacing:-.005em;line-height:1.15;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
-/* 标记里那颗蓝点是它唯一的彩色记号，这里把同一颗点接到品牌名末尾——用伪元素而不是写进
-   文字，所以站长把站名改成任何别的字，这一点都还在。两处合起来才像同一套记号。 */
 .brand-name::after{
   content:"";display:inline-block;
   width:5px;height:5px;border-radius:50%;
