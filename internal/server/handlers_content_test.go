@@ -857,16 +857,19 @@ func TestHomePageAuthorHeaderAndTypeRow(t *testing.T) {
 		t.Error("the filtered view dropped the author header")
 	}
 
-	// A site with no cover image draws no empty band and no cover element.
+	// A site with no configured cover falls back to the built-in Boop cover.
 	if rec := c.patchSettings(t, `{"site_cover_url":""}`, c.cookie, c.csrf); rec.Code != http.StatusOK {
 		t.Fatalf("clear the cover: status = %d: %s", rec.Code, rec.Body.String())
 	}
 	plain := c.do(t, http.MethodGet, "/", "", nil, nil).Body.String()
-	if !strings.Contains(plain, `class="author-head is-plain"`) {
-		t.Error("the header does not fall back to its unbannered shape")
+	if !strings.Contains(plain, `class="author-head has-cover"`) {
+		t.Error("the header loses its cover shape when no custom image is configured")
 	}
-	if strings.Contains(plain, `class="author-cover"`) || strings.Contains(plain, cover) {
-		t.Error("a cleared cover image is still rendered")
+	if !strings.Contains(plain, `src="/static/brand/boop-cover.svg"`) {
+		t.Error("a cleared cover image does not fall back to the built-in Boop cover")
+	}
+	if strings.Contains(plain, cover) {
+		t.Error("the cleared custom cover image is still rendered")
 	}
 	if !strings.Contains(plain, `class="type-tabs"`) {
 		// A guard, not a requirement of the feature: the two blocks are

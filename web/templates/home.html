@@ -7,13 +7,11 @@
          是「关注中 / 关注者 / 获赞」，Boop 只有一个作者、没有关注关系（docs/PRODUCT.md §7），
          站长要的是把那一行换成简介，所以这里既没有关注数也没有粉丝数，只有这个站真实存在的
          事实。两端都取自信息流自己列出的内容（content.PublishedSpan 与 Feed 同一排序），
-         所以「最近更新于」永远不会指向信息流顶上那张卡之外的东西。封面图留空时整条横带不
-         渲染，头像也不会被顶上去。 -->
+         所以「最近更新于」永远不会指向信息流顶上那张卡之外的东西。站长没有配置封面图时，
+         使用内置 Boop 品牌封面，保证首页仍有完整的视觉层次。 -->
     {{if .Header.Show}}
-    <section class="author-head{{if .Header.CoverURL}} has-cover{{else}} is-plain{{end}}">
-      {{if .Header.CoverURL}}
-      <div class="author-cover"><img src="{{.Header.CoverURL}}" alt="" loading="lazy" decoding="async"></div>
-      {{end}}
+    <section class="author-head has-cover">
+      <div class="author-cover"><img src="{{if .Header.CoverURL}}{{.Header.CoverURL}}{{else}}/static/brand/boop-cover.svg{{end}}" alt="" loading="lazy" decoding="async"></div>
       <div class="author-id">
         {{template "avatar" .Header.Avatar}}
         <div class="author-meta">

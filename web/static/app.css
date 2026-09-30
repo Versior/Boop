@@ -284,8 +284,6 @@ h1,h2,h3,p{margin:0}
    里，越长的站名越先被挤断。截图里头像是一块独立分区，下面的名称、简介与事实都比它窄、与它
    左边缘对齐。 */
 .author-id{display:flex;flex-direction:column;align-items:flex-start;padding:0 var(--pad) 16px}
-/* 没有封面图时不留一条空横带，也不把头像往上顶：整块从内边距开始。 */
-.author-head.is-plain .author-id{padding-top:16px}
 /* 头像比卡片上的 40px 大一大圈并压住封面图的下沿，加一圈底色描边让它与封面分开。
    104 / -52 这对数是照截图的比例定的：头像约占栏宽四分之一，压在封面上的部分约为自身一半。 */
 .author-id .avatar{width:104px;height:104px;border:5px solid var(--bg);background:var(--bg)}
