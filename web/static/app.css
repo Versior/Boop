@@ -276,8 +276,11 @@ h1,h2,h3,p{margin:0}
 /* 形态照站长给的那张个人主页截图：封面图一条横带，大头像**单独占一行**并压住它的下沿，名称与
    站长标识在头像下方左对齐，接着是简介，最后是带图标的一行事实（RSS 订阅 / 始于 / 最近更新于）。
    **没有统计数字那一行**——图里那行是「关注中 / 关注者 / 获赞」，Boop 只有一个作者、没有关注
-   关系（docs/PRODUCT.md §7），站长要的是把那一行换成简介，所以这里只有这个站真实存在的事实。 */
+   关系（docs/PRODUCT.md §7），站长要的是把那一行换成简介，所以这里只有这个站真实存在的事实。
+   封面的两种形态都在这段里：has-cover 有横带，is-plain 是站长清空封面之后要的空白头部。 */
 .author-head{border-bottom:1px solid var(--line)}
+/* 没有横带时头部只剩头像与文字，得自己撑出上边距——否则头像会贴着栏顶。 */
+.author-head.is-plain .author-id{padding-top:16px}
 .author-cover{display:block;width:100%;aspect-ratio:3/1;background:var(--bg-soft);overflow:hidden}
 .author-cover img{display:block;width:100%;height:100%;object-fit:cover}
 /* 头像单独一行、靠左，不跟文字并排：并排时头像被卡在封面的下沿上，名称只能挤在它右侧那半行

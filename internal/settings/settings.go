@@ -144,13 +144,21 @@ type Values struct {
 	StoragePublicURL          string
 }
 
+// DefaultSiteCover is the banner a site shows before its owner has chosen one.
+// It is a path into the embedded static bundle rather than an absolute URL,
+// because Seed has no access to the deployment's base URL - an absolute default
+// would freeze whichever origin happened to seed the database into every new
+// install. An empty SiteCoverURL still means "no banner at all", which is what
+// an owner gets by clearing the field.
+const DefaultSiteCover = "/static/brand/boop-cover.png"
+
 // Defaults returns the documented default settings.
 func Defaults() Values {
 	return Values{
 		SiteName:                  "Boop",
 		SiteDescription:           "遇事开心的个人博客",
 		SiteAvatarURL:             "",
-		SiteCoverURL:              "",
+		SiteCoverURL:              DefaultSiteCover,
 		SiteIconURL:               "",
 		SiteTimezone:              "Asia/Shanghai",
 		PageSize:                  20,

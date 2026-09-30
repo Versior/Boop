@@ -114,7 +114,7 @@ internal/server/   HTTP、模板数据与静态资源服务
 internal/store/    SQLite、迁移与事务边界
 internal/settings/ 后台设置与密钥加密
 web/templates/     服务端渲染模板
-web/static/        CSS、JavaScript 与品牌资源
+web/static/        CSS、JavaScript、品牌标记、字标源文件与出厂封面图
 docs/              产品、API、数据库与实施说明
 ```
 

@@ -185,7 +185,7 @@ CREATE TABLE ai_cache (
   "site.name": "Boop",
   "site.description": "遇事开心的个人博客",
   "site.avatar_url": "",
-  "site.cover_url": "",
+  "site.cover_url": "/static/brand/boop-cover.png",
   "site.icon_url": "",
   "site.timezone": "Asia/Shanghai",
   "content.page_size": 20,
@@ -199,6 +199,8 @@ CREATE TABLE ai_cache (
   "ai.author_status_ttl_hours": 168
 }
 ```
+
+`site.cover_url` 的默认值是**站点自己的一个路径**（随发行版发布的横幅），不是绝对地址：播种发生在还不知道部署域名的时刻，写死绝对地址会把那一刻的域名焊进每一个新装。清空这一栏表示「不要封面」，与「从未配置」是同一个存储值，所以「要不要横幅」是靠这一栏的内容而不是靠这一行在不在来判断的。
 
 `storage.*` 这一组**不在播种之列**：`storage.mode` 等六个键由「第一次保存存储分类」或「用 `BOOP_R2_*` 做的首次导入」写入，`storage.mode` 缺行就是「站点从未保存过存储配置，按环境变量跑」的标志。把它们按默认值播种会抹掉这个事实，让一个只有 `BOOP_R2_*`（且没有 `BOOP_MASTER_KEY`、凭据无法入库）的部署在升级后悄悄把新上传写到本地目录去。读取时它们仍回退到文档默认值（`storage.mode` = `local`），所以页面与媒体路径看到一个确定的存放位置。
 

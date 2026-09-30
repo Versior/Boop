@@ -982,6 +982,12 @@ func TestAdminSettingsPageAndIndex(t *testing.T) {
 				t.Errorf("%s is still type=url, so a site-relative path cannot be saved from the page", name)
 			}
 		}
+		// The cover field opens with the shipped default, which is itself a path
+		// - so a form that refuses relative addresses cannot even be submitted
+		// unchanged.
+		if !strings.Contains(body, `value="`+settings.DefaultSiteCover+`"`) {
+			t.Errorf("the cover field does not open with the shipped default %q", settings.DefaultSiteCover)
+		}
 	})
 
 	t.Run("the category row is the way between them", func(t *testing.T) {

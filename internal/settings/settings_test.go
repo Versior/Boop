@@ -30,10 +30,13 @@ func testDB(t *testing.T) *sql.DB {
 func TestDefaultsMatchDocumentedValues(t *testing.T) {
 	got := Defaults()
 	want := Values{
-		SiteName:                  "Boop",
-		SiteDescription:           "遇事开心的个人博客",
-		SiteAvatarURL:             "",
-		SiteCoverURL:              "",
+		SiteName:        "Boop",
+		SiteDescription: "遇事开心的个人博客",
+		SiteAvatarURL:   "",
+		// A shipped cover, not an empty string: a new site opens with the banner
+		// in web/static/brand/ rather than a bare author block. Clearing the
+		// field is how an owner asks for no banner.
+		SiteCoverURL:              DefaultSiteCover,
 		SiteTimezone:              "Asia/Shanghai",
 		PageSize:                  20,
 		RegistrationEnabled:       true,
@@ -84,7 +87,7 @@ func TestSeedWritesEveryDocumentedKeyOnce(t *testing.T) {
 		"site.name":                   `"Boop"`,
 		"site.description":            `"遇事开心的个人博客"`,
 		"site.avatar_url":             `""`,
-		"site.cover_url":              `""`,
+		"site.cover_url":              `"` + DefaultSiteCover + `"`,
 		"site.icon_url":               `""`,
 		"site.timezone":               `"Asia/Shanghai"`,
 		"content.page_size":           `20`,
@@ -385,9 +388,12 @@ func TestSetValidatesKnownKeys(t *testing.T) {
 		{"icon wrong type", KeySiteIconURL, 12, true},
 		// The home cover image is the same kind of value as the avatar and the
 		// icon, so it accepts exactly the same shapes: empty (the page draws no
-		// cover, .is-plain), an absolute http(s) URL, or a path on this site.
+		// cover, .is-plain), an absolute http(s) URL, or a path on this site. The
+		// last of those is also the shipped default, which is why the case below
+		// checks the value the default actually holds rather than a stand-in.
 		{"cover empty", KeySiteCoverURL, "", false},
 		{"cover https", KeySiteCoverURL, "https://cdn.example.com/cover.jpg", false},
+		{"cover the shipped default", KeySiteCoverURL, DefaultSiteCover, false},
 		{"cover at upper bound", KeySiteCoverURL, "https://example.com/" + strings.Repeat("a", maxAssetURLRunes-len("https://example.com/")), false},
 		{"cover too long", KeySiteCoverURL, "https://example.com/" + strings.Repeat("a", maxAssetURLRunes), true},
 		{"cover relative", KeySiteCoverURL, "/cover.jpg", false},

@@ -826,6 +826,9 @@ func TestHomePageAuthorHeaderAndTypeRow(t *testing.T) {
 		`.author-id{display:flex;flex-direction:column`,
 		`.author-id .avatar{width:104px;height:104px;`,
 		`.author-head.has-cover .author-id .avatar{margin-top:-52px}`,
+		// The plain shape needs its own top padding, or the avatar sits flush
+		// against the top of the column once there is no band to push it down.
+		`.author-head.is-plain .author-id{padding-top:16px}`,
 	} {
 		if !strings.Contains(css, want) {
 			t.Errorf("app.css no longer lays the author block out that way: missing %s", want)
@@ -857,16 +860,18 @@ func TestHomePageAuthorHeaderAndTypeRow(t *testing.T) {
 		t.Error("the filtered view dropped the author header")
 	}
 
-	// A site with no configured cover falls back to the built-in Boop cover.
+	// Clearing the cover is how an owner asks for no banner, so the band goes
+	// away and the header switches to its plain shape. This is also the only
+	// way to reach that shape now that a site starts with a cover.
 	if rec := c.patchSettings(t, `{"site_cover_url":""}`, c.cookie, c.csrf); rec.Code != http.StatusOK {
 		t.Fatalf("clear the cover: status = %d: %s", rec.Code, rec.Body.String())
 	}
 	plain := c.do(t, http.MethodGet, "/", "", nil, nil).Body.String()
-	if !strings.Contains(plain, `class="author-head has-cover"`) {
-		t.Error("the header loses its cover shape when no custom image is configured")
+	if !strings.Contains(plain, `class="author-head is-plain"`) {
+		t.Error("a cleared cover does not switch the header to its plain shape")
 	}
-	if !strings.Contains(plain, `src="/static/brand/boop-cover.svg"`) {
-		t.Error("a cleared cover image does not fall back to the built-in Boop cover")
+	if strings.Contains(plain, `class="author-cover"`) {
+		t.Error("the header still draws a cover band after the cover was cleared")
 	}
 	if strings.Contains(plain, cover) {
 		t.Error("the cleared custom cover image is still rendered")
@@ -876,6 +881,39 @@ func TestHomePageAuthorHeaderAndTypeRow(t *testing.T) {
 		// independent, so losing the row here would mean the shared edit broke
 		// both.
 		t.Error("clearing the cover dropped the type row")
+	}
+}
+
+// A site that has never had its cover configured shows the one that ships, so
+// the front door is never a bare author block on a fresh install.
+//
+// The asset is fetched, not just named. A path that no longer resolves in the
+// embedded bundle renders as a broken image while every markup assertion above
+// stays green - the address is still in the src attribute, the class is still
+// has-cover, the element still exists. Only asking for the bytes catches it,
+// which is the same reason the tab icon and the stylesheet are fetched by their
+// own tests rather than assumed.
+func TestANewSiteShowsTheShippedCover(t *testing.T) {
+	c := newContentFixture(t)
+
+	body := c.do(t, http.MethodGet, "/", "", nil, nil).Body.String()
+	shipped := settings.DefaultSiteCover + "?v=" + staticAssets().version
+	if !strings.Contains(body, `class="author-head has-cover"`) {
+		t.Errorf("a new site has no cover band")
+	}
+	if !strings.Contains(body, `<div class="author-cover"><img src="`+shipped+`"`) {
+		t.Errorf("the cover band does not draw the shipped image %q", shipped)
+	}
+
+	asset := c.do(t, http.MethodGet, settings.DefaultSiteCover, "", nil, nil)
+	if asset.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d, want the shipped cover to be served", settings.DefaultSiteCover, asset.Code)
+	}
+	if ct := asset.Header().Get("Content-Type"); ct != "image/png" {
+		t.Errorf("shipped cover Content-Type = %q, want image/png", ct)
+	}
+	if asset.Body.Len() == 0 {
+		t.Error("the shipped cover is empty")
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"boop/internal/content"
+	"boop/internal/settings"
 )
 
 // structuredData extracts the JSON-LD document of a page and decodes it, so a
@@ -116,13 +117,18 @@ func TestIndexHeadCarriesCanonicalAndSiteDocument(t *testing.T) {
 	f := newAuthFixture(t)
 
 	page := head(t, f.do(t, http.MethodGet, "/", "", nil, nil).Body.String())
+	// The card is large because the page has an image: a site that has never had
+	// a cover configured still shows the one that ships in web/static/brand/,
+	// and the tag has to be derived from the image actually being there rather
+	// than from the field having been filled in by hand.
 	for _, want := range []string{
 		`<link rel="canonical" href="http://localhost:8080/">`,
 		`<meta property="og:type" content="website">`,
 		`<meta property="og:url" content="http://localhost:8080/">`,
 		`<meta property="og:title" content="Boop">`,
 		`<meta name="description" content="遇事开心的个人博客">`,
-		`<meta name="twitter:card" content="summary">`,
+		`<meta property="og:image" content="http://localhost:8080/static/brand/boop-cover.png?v=`,
+		`<meta name="twitter:card" content="summary_large_image">`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("index head is missing %s", want)
@@ -144,6 +150,11 @@ func TestIndexHeadCarriesCanonicalAndSiteDocument(t *testing.T) {
 // The index preview is a picture of the whole site, so the cover image - the one
 // image drawn to be seen at full width - wins over the avatar. The tab icon
 // stays last: it is drawn for sixteen pixels.
+//
+// A new site already has a cover: the one that ships in web/static/brand/. That
+// makes the fallback chain reachable only by clearing the field, which is the
+// same edit an owner makes to ask for no banner, so the test walks the chain in
+// that order rather than starting from an empty site.
 func TestIndexPreviewPrefersTheCoverImage(t *testing.T) {
 	f := newSettingsFixture(t)
 	owner := f.bootstrapOwner(t, "owner@example.com", "遇事开心")
@@ -171,14 +182,30 @@ func TestIndexPreviewPrefersTheCoverImage(t *testing.T) {
 		return ""
 	}
 
-	patch(`{"site_avatar_url":"` + avatar + `","site_icon_url":"` + icon + `"}`)
+	// Out of the box: the shipped cover. It is a path into the embedded bundle,
+	// and the bundle is served immutable for a year, so the preview URL has to
+	// carry the content version and has to come out absolute - a preview image
+	// only makes sense to a service reading it from somewhere else.
+	shipped := ogImage()
+	if !strings.Contains(shipped, settings.DefaultSiteCover+"?v=") {
+		t.Errorf("og:image = %q, want the shipped cover %q carrying the bundle version", shipped, settings.DefaultSiteCover)
+	}
+	if !strings.Contains(shipped, "http://") && !strings.Contains(shipped, "https://") {
+		t.Errorf("og:image = %q, want an absolute URL", shipped)
+	}
+
+	// Clearing the cover is how an owner asks for no banner; the chain then
+	// falls back to the avatar, and the tab icon stays behind it.
+	patch(`{"site_cover_url":"","site_avatar_url":"` + avatar + `","site_icon_url":"` + icon + `"}`)
 	if got := ogImage(); !strings.Contains(got, avatar) {
-		t.Errorf("og:image = %q, want the avatar while no cover is configured", got)
+		t.Errorf("og:image = %q, want the avatar once the cover is cleared", got)
 	}
 	if got := ogImage(); strings.Contains(got, icon) {
 		t.Errorf("og:image = %q, want the avatar ahead of the tab icon", got)
 	}
 
+	// A URL the owner typed belongs to someone else's cache policy, so it is
+	// passed through as written: nothing is appended to it.
 	patch(`{"site_cover_url":"` + cover + `"}`)
 	got := ogImage()
 	if !strings.Contains(got, cover) {
@@ -186,6 +213,9 @@ func TestIndexPreviewPrefersTheCoverImage(t *testing.T) {
 	}
 	if strings.Contains(got, avatar) {
 		t.Errorf("og:image = %q, still the avatar", got)
+	}
+	if strings.Contains(got, "?v=") {
+		t.Errorf("og:image = %q, want the configured URL untouched", got)
 	}
 }
 

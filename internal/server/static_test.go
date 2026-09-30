@@ -32,7 +32,7 @@ func staticRequest(t *testing.T, srv *server, target string, header map[string]s
 func TestStaticAssetsAreServedImmutable(t *testing.T) {
 	handler := testServer(t, discardLogger()).handler()
 
-	for _, name := range []string{"app.css", "app.js", "brand/boop-mark.svg"} {
+	for _, name := range []string{"app.css", "app.js", "brand/boop-mark.svg", "brand/boop-wordmark.svg"} {
 		t.Run(name, func(t *testing.T) {
 			rec := do(t, handler, http.MethodGet, "/static/"+name, nil)
 
@@ -65,7 +65,7 @@ func TestStaticAssetsAreServedImmutable(t *testing.T) {
 func TestStaticETagIsTheDigestOfTheBytesServed(t *testing.T) {
 	srv := testServer(t, discardLogger())
 
-	for _, name := range []string{"app.css", "app.js", "brand/boop-mark.svg"} {
+	for _, name := range []string{"app.css", "app.js", "brand/boop-mark.svg", "brand/boop-wordmark.svg"} {
 		t.Run(name, func(t *testing.T) {
 			rec := staticRequest(t, srv, "/static/"+name, nil)
 
