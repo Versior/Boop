@@ -235,15 +235,16 @@ func TestPatchSettingsRejectsUnknownFieldsAndValues(t *testing.T) {
 		{"wrong type", `{"page_size":"20"}`, http.StatusBadRequest, "invalid_body"},
 		{"blank site name", `{"site_name":"   "}`, http.StatusBadRequest, "invalid_settings"},
 		{"unknown timezone", `{"site_timezone":"Mars/Olympus"}`, http.StatusBadRequest, "invalid_settings"},
-		{"relative avatar", `{"site_avatar_url":"/avatar.png"}`, http.StatusBadRequest, "invalid_settings"},
 		{"avatar with a wrong scheme", `{"site_avatar_url":"javascript:alert(1)"}`, http.StatusBadRequest, "invalid_settings"},
 		{"avatar with credentials", `{"site_avatar_url":"https://user:pass@example.com/a.png"}`, http.StatusBadRequest, "invalid_settings"},
-		{"relative icon", `{"site_icon_url":"/favicon.png"}`, http.StatusBadRequest, "invalid_settings"},
+		{"avatar as a data url", `{"site_avatar_url":"data:image/png;base64,AAAA"}`, http.StatusBadRequest, "invalid_settings"},
+		{"protocol-relative avatar", `{"site_avatar_url":"//evil.example.com/a.png"}`, http.StatusBadRequest, "invalid_settings"},
 		{"icon with a wrong scheme", `{"site_icon_url":"javascript:alert(1)"}`, http.StatusBadRequest, "invalid_settings"},
 		{"icon with credentials", `{"site_icon_url":"https://user:pass@example.com/favicon.png"}`, http.StatusBadRequest, "invalid_settings"},
-		{"relative cover", `{"site_cover_url":"/cover.jpg"}`, http.StatusBadRequest, "invalid_settings"},
+		{"protocol-relative icon", `{"site_icon_url":"//evil.example.com/favicon.png"}`, http.StatusBadRequest, "invalid_settings"},
 		{"cover with a wrong scheme", `{"site_cover_url":"javascript:alert(1)"}`, http.StatusBadRequest, "invalid_settings"},
 		{"cover with credentials", `{"site_cover_url":"https://user:pass@example.com/cover.jpg"}`, http.StatusBadRequest, "invalid_settings"},
+		{"protocol-relative cover", `{"site_cover_url":"//evil.example.com/cover.jpg"}`, http.StatusBadRequest, "invalid_settings"},
 		{"unknown secret to clear", `{"clear_secret":["github.nope"]}`, http.StatusBadRequest, "invalid_settings"},
 		{"not an object", `[]`, http.StatusBadRequest, "invalid_body"},
 		{"trailing content", `{"site_name":"a"}{"site_name":"b"}`, http.StatusBadRequest, "invalid_body"},
@@ -260,6 +261,49 @@ func TestPatchSettingsRejectsUnknownFieldsAndValues(t *testing.T) {
 	}
 	if secrets := f.countRows(t, "secret_settings"); secrets != 0 {
 		t.Errorf("secret_settings = %d, want none", secrets)
+	}
+}
+
+// A brand image address may be a path on this site. That shape has to survive
+// the round trip through the API, because it is what the upload endpoint hands
+// back: requiring an absolute URL meant pasting the site's own origin in front
+// of a path the site had just produced.
+//
+// The two render consequences are asserted here as well, because they differ: a
+// path into the embedded bundle gains the bundle's version and a path the site
+// serves itself does not, and only one of those may be cached for a year under
+// a name that never changes.
+func TestPatchSettingsAcceptsAPathOnThisSite(t *testing.T) {
+	f := newSettingsFixture(t)
+	owner := f.bootstrapOwner(t, "owner@example.com", "遇事开心")
+	login := f.login(t, owner.Email, authPassword, nil)
+	cookie, csrf := sessionCookie(t, login), decodeData(t, login)["csrf_token"].(string)
+
+	const uploaded = "/uploads/2026/09/a.png"
+	rec := f.patchSettings(t, `{"site_avatar_url":"`+uploaded+`","site_cover_url":"`+uploaded+`","site_icon_url":"`+uploaded+`"}`, cookie, csrf)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch a site-relative path: status = %d: %s", rec.Code, rec.Body.String())
+	}
+	data := decodeData(t, rec)
+	for _, field := range []string{"site_avatar_url", "site_cover_url", "site_icon_url"} {
+		if data[field] != uploaded {
+			t.Errorf("%s = %v, want %q", field, data[field], uploaded)
+		}
+	}
+
+	body := f.do(t, http.MethodGet, "/", "", nil, nil).Body.String()
+	// Drawn as written: the upload handler answers /uploads/… itself, so the
+	// bundle version means nothing to it and must not be invented for it.
+	if !strings.Contains(body, `<div class="author-cover"><img src="`+uploaded+`"`) {
+		t.Errorf("the cover did not render the path it was given")
+	}
+	if strings.Contains(body, uploaded+"?v=") {
+		t.Errorf("a path outside /static/ was given the bundle version")
+	}
+	// The preview address is absolute even though the stored one is not: a
+	// service reading the tag fetches it from somewhere else.
+	if !strings.Contains(head(t, body), `<meta property="og:image" content="http://localhost:8080`+uploaded+`">`) {
+		t.Errorf("og:image is not the absolute form of the stored path")
 	}
 }
 
@@ -922,6 +966,20 @@ func TestAdminSettingsPageAndIndex(t *testing.T) {
 							category.section, marker, other.section)
 					}
 				}
+			}
+		}
+	})
+
+	t.Run("the address fields can hold a path on this site", func(t *testing.T) {
+		body := f.do(t, http.MethodGet, "/admin/settings/site", "", nil, ownerCookie).Body.String()
+		// type="url" is the trap here, not a style choice: the browser refuses to
+		// submit the form when the value is not an absolute URL, so a
+		// site-relative path cannot be saved from the page at all. The server is
+		// the real validator either way, which makes the attribute pure cost.
+		for _, name := range []string{"site_avatar_url", "site_cover_url", "site_icon_url"} {
+			field := markupBlock(t, body, `name="`+name+`"`, ">")
+			if strings.Contains(field, `type="url"`) {
+				t.Errorf("%s is still type=url, so a site-relative path cannot be saved from the page", name)
 			}
 		}
 	})

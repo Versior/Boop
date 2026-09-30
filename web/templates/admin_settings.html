@@ -54,17 +54,17 @@
         </label>
         <label class="auth-field">
           <span>站点头像 URL</span>
-          <input name="site_avatar_url" type="url" maxlength="2048" value="{{.Settings.SiteAvatarURL}}" placeholder="https://example.com/avatar.png">
+          <input name="site_avatar_url" type="text" maxlength="2048" value="{{.Settings.SiteAvatarURL}}" placeholder="https://example.com/avatar.png">
         </label>
-        <p class="settings-hint">留空用站长账号头像，再为空用内置图标；只接受不带凭据的 http/https 绝对地址。</p>
+        <p class="settings-hint">留空用站长账号头像，再为空用内置图标；http/https 绝对地址，或以 <code>/</code> 开头的本站路径（上传接口返回的就是这种）。</p>
         <label class="auth-field">
           <span>封面图 URL</span>
-          <input name="site_cover_url" type="url" maxlength="2048" value="{{.Settings.SiteCoverURL}}" placeholder="https://example.com/cover.jpg">
+          <input name="site_cover_url" type="text" maxlength="2048" value="{{.Settings.SiteCoverURL}}" placeholder="https://example.com/cover.jpg">
         </label>
-        <p class="settings-hint">首页作者头部顶端的横幅，横图效果最好。留空则首页不显示封面。</p>
+        <p class="settings-hint">首页作者头部顶端的横幅，横图效果最好。新站点预置了一张内置横幅；<strong>留空则首页不显示封面</strong>。</p>
         <label class="auth-field">
           <span>站点图标 URL</span>
-          <input name="site_icon_url" type="url" maxlength="2048" value="{{.Settings.SiteIconURL}}" placeholder="https://example.com/favicon.png">
+          <input name="site_icon_url" type="text" maxlength="2048" value="{{.Settings.SiteIconURL}}" placeholder="https://example.com/favicon.png">
         </label>
         <p class="settings-hint">浏览器标签页图标。留空则与上面的头像一致。</p>
         <label class="auth-field">

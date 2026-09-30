@@ -612,10 +612,28 @@ func validateBaseURL(key, raw string) error {
 	return nil
 }
 
-// validateAssetURL accepts an empty value (nothing is configured, so the caller
-// falls back) or an absolute http(s) URL without credentials and within a sane
-// length, so one setting can never render an off-scheme or unbounded resource
-// reference. It backs both the site avatar and the site icon.
+// validateAssetURL backs the three brand image addresses (site avatar, home
+// cover and tab icon) with one rule. It accepts an empty value - nothing is
+// configured, so the caller falls back - or one of the two shapes such an
+// address can take: an absolute http(s) URL with a host and no credentials, or
+// a path inside this site starting with a single slash. Both are bounded to a
+// sane length, so one setting can never render an off-scheme or unbounded
+// resource reference.
+//
+// The site-relative shape is here for two reasons. The upload endpoint answers
+// with one (/uploads/2026/09/<hash>.png), so requiring an absolute URL forced
+// every owner to paste their own origin in front of what the API had just
+// handed them; and the shipped cover image is a path into the embedded static
+// bundle, which has no absolute form until a request says which host it is on.
+//
+// What the rule guards against decides where the line sits. These values are
+// rendered into src and href attributes, so the shapes that must never get
+// through are the ones a browser would read as a different origin or as
+// something that is not an image: a protocol-relative //host/path (which
+// resolves cross-origin while looking local), a backslash, which browsers
+// normalise to a slash and which would smuggle the same thing past the check as
+// /\host/path, and any scheme at all - data:, javascript: and blob: all lose on
+// the scheme test, because only http and https pass it.
 func validateAssetURL(key, raw string) error {
 	if raw == "" {
 		return nil
@@ -623,12 +641,21 @@ func validateAssetURL(key, raw string) error {
 	if utf8.RuneCountInString(raw) > maxAssetURLRunes {
 		return fmt.Errorf("settings: set: %s must be at most %d characters", key, maxAssetURLRunes)
 	}
+	if strings.HasPrefix(raw, "/") {
+		if strings.HasPrefix(raw, "//") {
+			return fmt.Errorf("settings: set: %s %q must not be a protocol-relative address", key, raw)
+		}
+		if strings.ContainsAny(raw, `\ `) {
+			return fmt.Errorf("settings: set: %s %q must not contain a backslash or a space", key, raw)
+		}
+		return nil
+	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("settings: set: %s %q is not a URL", key, raw)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("settings: set: %s %q must use http or https", key, raw)
+		return fmt.Errorf("settings: set: %s %q must use http or https, or start with / for a path on this site", key, raw)
 	}
 	if parsed.Host == "" {
 		return fmt.Errorf("settings: set: %s %q has no host", key, raw)

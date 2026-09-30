@@ -270,8 +270,11 @@ func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
 	// rather than repeating it above every additional page.
 	if r.URL.Query().Get("cursor") == "" {
 		view.Header = authorHeader{
-			Show:     true,
-			CoverURL: values.SiteCoverURL,
+			Show: true,
+			// staticURL because the shipped cover is a path into the embedded
+			// bundle, and that is only cacheable for a year when the address
+			// carries the bundle's version.
+			CoverURL: staticURL(values.SiteCoverURL),
 			Name:     view.OwnerName,
 			Avatar:   view.OwnerAvatar,
 			Bio:      values.SiteDescription,

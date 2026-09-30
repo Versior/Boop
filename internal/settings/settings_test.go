@@ -356,30 +356,42 @@ func TestSetValidatesKnownKeys(t *testing.T) {
 		{"avatar with query", KeySiteAvatarURL, "https://cdn.example.com/a.png?v=2", false},
 		{"avatar at upper bound", KeySiteAvatarURL, "https://example.com/" + strings.Repeat("a", maxAssetURLRunes-len("https://example.com/")), false},
 		{"avatar too long", KeySiteAvatarURL, "https://example.com/" + strings.Repeat("a", maxAssetURLRunes), true},
-		{"avatar relative", KeySiteAvatarURL, "/a.png", true},
+		// A site-relative path is the second accepted shape. The upload endpoint
+		// answers with one, so rejecting it made the owner paste their own origin
+		// in front of what the API had just handed them.
+		{"avatar relative", KeySiteAvatarURL, "/a.png", false},
+		{"avatar relative to an upload", KeySiteAvatarURL, "/uploads/2026/09/a.png", false},
+		// Still rejected: the shapes a browser would read as another origin or as
+		// something that is not an image at all.
+		{"avatar protocol relative", KeySiteAvatarURL, "//evil.example.com/a.png", true},
+		{"avatar backslash escape", KeySiteAvatarURL, `/\evil.example.com/a.png`, true},
+		{"avatar relative with a space", KeySiteAvatarURL, "/a b.png", true},
 		{"avatar wrong scheme", KeySiteAvatarURL, "javascript:alert(1)", true},
 		{"avatar data url", KeySiteAvatarURL, "data:image/png;base64,AAAA", true},
 		{"avatar without host", KeySiteAvatarURL, "https://", true},
 		{"avatar with credentials", KeySiteAvatarURL, "https://user:pass@example.com/a.png", true},
 		{"avatar wrong type", KeySiteAvatarURL, 12, true},
 		// The site icon accepts exactly what the avatar accepts: an empty value
-		// (the fallback chain takes over) or an absolute http(s) URL.
+		// (the fallback chain takes over), an absolute http(s) URL, or a path on
+		// this site.
 		{"icon empty", KeySiteIconURL, "", false},
 		{"icon https", KeySiteIconURL, "https://cdn.example.com/favicon.png", false},
 		{"icon at upper bound", KeySiteIconURL, "https://example.com/" + strings.Repeat("a", maxAssetURLRunes-len("https://example.com/")), false},
 		{"icon too long", KeySiteIconURL, "https://example.com/" + strings.Repeat("a", maxAssetURLRunes), true},
-		{"icon relative", KeySiteIconURL, "/favicon.png", true},
+		{"icon relative", KeySiteIconURL, "/favicon.png", false},
+		{"icon protocol relative", KeySiteIconURL, "//evil.example.com/favicon.png", true},
 		{"icon wrong scheme", KeySiteIconURL, "javascript:alert(1)", true},
 		{"icon with credentials", KeySiteIconURL, "https://user:pass@example.com/favicon.png", true},
 		{"icon wrong type", KeySiteIconURL, 12, true},
 		// The home cover image is the same kind of value as the avatar and the
 		// icon, so it accepts exactly the same shapes: empty (the page draws no
-		// cover) or an absolute http(s) URL.
+		// cover, .is-plain), an absolute http(s) URL, or a path on this site.
 		{"cover empty", KeySiteCoverURL, "", false},
 		{"cover https", KeySiteCoverURL, "https://cdn.example.com/cover.jpg", false},
 		{"cover at upper bound", KeySiteCoverURL, "https://example.com/" + strings.Repeat("a", maxAssetURLRunes-len("https://example.com/")), false},
 		{"cover too long", KeySiteCoverURL, "https://example.com/" + strings.Repeat("a", maxAssetURLRunes), true},
-		{"cover relative", KeySiteCoverURL, "/cover.jpg", true},
+		{"cover relative", KeySiteCoverURL, "/cover.jpg", false},
+		{"cover protocol relative", KeySiteCoverURL, "//evil.example.com/cover.jpg", true},
 		{"cover wrong scheme", KeySiteCoverURL, "javascript:alert(1)", true},
 		{"cover with credentials", KeySiteCoverURL, "https://user:pass@example.com/cover.jpg", true},
 		{"cover wrong type", KeySiteCoverURL, 12, true},

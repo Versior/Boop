@@ -239,7 +239,7 @@ func (s *server) postingMetadata(r *http.Request, view *postPageView, post *cont
 // image and the WebSite document, which is what tells a search engine the name
 // of the site as a whole.
 func (s *server) indexMetadata(r *http.Request, view *feedView, values settings.Values) {
-	view.Meta.Image = absoluteImage(s.cfg.BaseURL, brandImage(values))
+	view.Meta.Image = absoluteImage(s.cfg.BaseURL, staticURL(brandImage(values)))
 	view.Meta.JSONLD = s.jsonLD(r, schemaSite{
 		Context:    "https://schema.org",
 		Type:       "WebSite",

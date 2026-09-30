@@ -113,6 +113,25 @@ func gzipCopy(body []byte) ([]byte, bool) {
 	return buffer.Bytes(), true
 }
 
+// staticURL turns a stored brand image address into the form a page should link
+// to. A path into the embedded bundle is served with a one-year immutable
+// cache, which is only safe because the URL carries a content-derived version -
+// so the version has to be attached here, at the moment the address becomes a
+// link. The shipped cover image is exactly such a path, and without this a
+// deployment that replaced that banner would leave every returning visitor
+// looking at the previous bytes for a year.
+//
+// Anything else passes through untouched: an absolute URL belongs to someone
+// else's cache policy, and a path the site serves itself (/uploads/…) is
+// addressed by its own name, so a version query would mean nothing to the
+// handler that answers it.
+func staticURL(image string) string {
+	if !strings.HasPrefix(image, "/"+staticDirPrefix) {
+		return image
+	}
+	return image + "?v=" + staticAssets().version
+}
+
 // handleStatic serves the embedded assets. Every asset is written once at build
 // time and the URL carries a content-derived version, so the response is both
 // immutable and impossible to pin to stale bytes.
