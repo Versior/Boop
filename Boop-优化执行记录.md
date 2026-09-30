@@ -922,6 +922,116 @@ markup 分不出「并排」与「上下」，只能读样式表。这是这一�
 
 ---
 
+## 16. 第十三轮：封面图与字标归档 + 与两笔并行提交的合并（`06169ec` `8cefc77`）
+
+### 16.1 他说了什么
+
+`所有的修改推送仓库更新` → 推完之后他追问 `全部的修改上传了？背景呢 logo呢` → 给出封面处置的选择：`归档并设为出厂默认（推荐）`。
+
+这两问都问在了点上。**背景（封面图）当时确实没进仓库**：它只存在于测试站点的数据目录 `/tmp/boop-verify/site-data/uploads/…` 里，而那是临时目录——系统清理一次就没了，仓库里一条记录都没有。字标那枚 `boop-wordmark.svg` 同理，只在 `a8a51a2` 那一轮被内联进 `base.html`，源文件从来没入过库。
+
+### 16.2 第一次推送被拒：远端有两笔并行提交
+
+`git push` 返回 `Updates were rejected because the remote contains work that you do not have locally`。`git fetch` 之后看到 **Versiorii 推了两个提交**：
+
+| 提交 | 内容 |
+| --- | --- |
+| `aab0581` | 前台左栏改成只剩标记（`--rail-w` 180px → 68px） |
+| `6e519d1` | 加了一张**自己画的** `web/static/brand/boop-cover.svg`，由模板 `{{if}}else` 兜底当默认封面 |
+
+处置顺序：先 `git branch backup/pre-parallel-merge` 保住我在推的那个提交，再 `git reset --hard origin/main` 换成新基线，然后**逐项重新评估**我的改动能不能落上去——不是机械 rebase，因为两边的活儿有重叠。
+
+`aab0581` 只把**前台左栏**改成只剩标记；`brand-type`（字标）在**移动端顶栏与后台侧栏仍在用**，所以 `#i-wordmark` 不是孤儿，字标源文件该归档、注释该留。
+
+### 16.3 同一个目标的两套做法：封面之争
+
+两笔提交都想做「新站点自带一张封面」，路子完全不同：
+
+| | `6e519d1`（远端） | 这一轮 |
+| --- | --- | --- |
+| 图 | 自己画的深色信号场 SVG（678 字节） | **他给的那张 PNG**（1200×400，73,465 字节） |
+| 落点 | 模板里的 `{{if .Header.CoverURL}}…{{else}}…{{end}}` | 设置层的默认值 `settings.DefaultSiteCover` |
+| 「不要封面」 | **无法表达**——清空这一栏仍然会回落到那张 SVG | 清空即 `.is-plain`，横带整条不渲染 |
+
+他选的 `归档并设为出厂默认` 指的是**他给的那张图**，所以取 PNG 这一版。这里有一个不能让步的点：**`is-plain` 必须留着**。封面的默认值一旦落在设置层，新站点的初始状态就是「有封面」，此时如果把模板兜底也留着或把 `is-plain` 删掉，站长就没有任何办法表达「我不想要这张横幅」——一个设置项永远无法被关掉。两套做法各自的注释与文档也互斥（`6e519d1` 写的是「站长未配置封面时使用内置品牌封面」），一并改掉。
+
+那份自画的 SVG 因此成了**重复的第二个「默认封面」**，`8cefc77` 把它删掉：仓库里同时躺着两个都自称默认的东西，下一个人一定会用错。它还在 `6e519d1` 里，想要回来一条 revert 就够。
+
+### 16.4 出厂默认是三处配合，缺一处都不成立
+
+**① 默认值必须写成站点自己的路径，不能写绝对地址。**
+
+播种发生在还不知道部署域名的时刻（`settings.Seed` 只拿到 `db`，拿不到 `cfg.BaseURL`），写死绝对地址会把**播种那一刻的域名焊进每一个新装**。所以 `DefaultSiteCover = "/static/brand/boop-cover.png"` 是一条裸路径。
+
+**② `/static/` 下的资源带一年 `immutable` 缓存，裸路径必须补版本号。**
+
+```go
+func staticURL(image string) string {
+    if !strings.HasPrefix(image, "/"+staticDirPrefix) {
+        return image
+    }
+    return image + "?v=" + staticAssets().version
+}
+```
+
+平时这个版本号由模板拼成 `?v={{.StaticVersion}}`；出厂封面是一条**裸路径**，渲染时若不补，将来换图会被老访客的浏览器钉住一年——而页面看起来一切正常，是最容易漏的一处。只给 `/static/` 前缀补，其余原样穿过：绝对地址属于别人的缓存策略，`/uploads/…` 由它自己的处理器按文件名寻址，版本查询对它没有意义。
+
+**③ 后台那三个地址框从 `type="url"` 改成 `type="text"`。**
+
+`type="url"` 会在浏览器端拒绝提交相对地址，而页面打开的默认值正好就是一条路径——也就是标准流程「打开设置页、什么都不改、点保存」会被**静默拦下**。真正的校验在服务端，这个属性只制造了这一种失败，没有换来任何保护。
+
+### 16.5 校验的线画在哪
+
+`validateAssetURL` 从此接受两种形态：**无凭据的 http/https 绝对地址**，或**以单个 `/` 开头的本站路径**。后者是必需的——上传接口返回的就是 `/uploads/2026/09/<hash>.png`，只收绝对地址等于要求站长把自己站点的域名拼在接口刚给他的那串路径前面。
+
+仍然拒绝的三种，每一种都对应一个具体的绕过方式：
+
+| 形态 | 为什么必须拒 |
+| --- | --- |
+| `//host/…` 协议相对地址 | 看着像本站路径，浏览器按跨域解析 |
+| 反斜杠 `/\host/…` | 浏览器把反斜杠当斜杠用，从上一条的缝隙里穿过去 |
+| `data:` / `javascript:` / `blob:` | 这三个值会进 `src`/`href`，在 scheme 那一步出局 |
+
+顺带修掉一处旧注释的残缺：原注释第三行直接接上了新段落的第一行，读起来是一句半截话。这一轮把整段文档注释重写了。
+
+### 16.6 测试
+
+- `internal/settings` 的校验表：`relative` 三条由**拒绝**翻成**接受**，补 `//host`、反斜杠、含空格的路径、`data url` 四条仍须拒绝的用例；默认值与播种断言改用 `DefaultSiteCover`；再补一条「出厂默认这个值本身合法」。
+- 后台接口的 `reject` 表：`relative` 三条换成三条协议相对地址 + 一条 `data url`。
+- 新增 `TestPatchSettingsAcceptsAPathOnThisSite`：钉住**两种渲染后果的区别**——`/static/` 下的路径补 `?v=`，`/uploads/` 下的路径原样渲染不加，而 `og:image` 两种都要补成绝对地址。
+- 新增 `TestANewSiteShowsTheShippedCover`：不只看 DOM，还**真的 GET 了那张图**核对 200 / `image/png` / 非空。地址写错只会渲染成一张破图，而「`src` 里有地址、类名是 `has-cover`、元素存在」这三条断言**全绿**。
+- `TestHomePageAuthorHeaderAndTypeRow` 里清空封面之后的那个分支改成断言 `is-plain`（横带不渲染、旧地址不出现），并从 `/static/app.css` 多读一条 `.author-head.is-plain .author-id{padding-top:16px}`——没有横带时头部得自己撑出上边距，否则头像贴着栏顶。
+- `TestIndexPreviewPrefersTheCoverImage` 改成**先验出厂封面**（带 `?v=` 且是绝对地址）再清空走头像这条链；`TestIndexHeadCarriesCanonicalAndSiteDocument` 的 `twitter:card` 由 `summary` 改成 `summary_large_image` 并补 `og:image` 断言——新站点的初始状态已经是「有封面」了。
+- `boop-wordmark.svg` 加进了 `static_test` 的取样列表，否则它是一枚没人引用的孤儿文件，哪天从 embed 里掉出去也没人知道。
+
+### 16.7 门禁与真机
+
+两笔各自跑一次完整门禁，都全绿：`gofmt -l .` 无输出、`go vet ./...` 无输出、`go test -race -count=1 ./...` 全绿（`internal/server` 196.0s / 198.7s）。
+
+真机（换二进制重启，两台实例）：
+
+| 场景 | 结果 |
+| --- | --- |
+| 8097 已有库，重启前后逐行比对 | `settings` **15 行逐字节相同**、迁移 `1-5` 不变；已有的绝对地址头像与图标原样留着 |
+| 8097 首页 | `author-head has-cover`、`src="/static/brand/boop-cover.png?v=945fe9949f87"`、`og:image` 是绝对地址且带版本号、`twitter:card` = `summary_large_image` |
+| 8097 `GET` 出厂封面 | `200 image/png` **73,465 字节**，sha256 与仓库里那份**一致** |
+| 8098 全新库 | `site.cover_url = "/static/brand/boop-cover.png"`，其余 14 个键都是文档默认值 |
+| 后台清空封面 | `200` → 首页 `is-plain`、横带消失、`og:image` 回落到头像 |
+| 后台写入 `/uploads/2026/09/<hash>.jpg` | `200` → `has-cover`，`src` **原样**渲染不带 `?v=`，`og:image` 补成绝对地址 |
+| `//evil.example.com/c.png` | `400` `must not be a protocol-relative address` |
+| `/\evil.example.com/c.png` | `400` `must not contain a backslash or a space` |
+| `data:image/png;base64,AAAA` | `400` `must use http or https, or start with / for a path on this site` |
+| `/a b.png` | `400` `must not contain a backslash or a space` |
+| 后台设置页 | 三个地址框都是 `type="text"`，封面框预填 `/static/brand/boop-cover.png`，提示文案两行内不溢出 |
+
+截图：`cover-shipped-1440.png`、`cover-shipped-375.png`、`cover-plain-1440.png`、`cover-admin-1440.png`。
+
+### 16.8 提交数
+
+`a8a51a2`（§15）+ `896e17f`（四份报告入库 + 忽略 `.workbuddy-ai/`）+ 本轮的 `06169ec`、`8cefc77` = 本地领先一度到 **4 个提交**，全部已推送。`origin/main` 现在是 `8cefc77`。
+
+---
+
 ## 附：如何复核
 
 ```bash
@@ -938,6 +1048,7 @@ git log --oneline 3f602a3~1..baedf66    # 第九轮的两个提交：先改回�
 git log --oneline baedf66..e3a7e74      # 第十轮（本文 §13）1 个提交：站名换字标 + 改名退路
 git log --oneline e3a7e74..b6d4c39      # 第十一轮（本文 §14）1 个提交：删掉整个站内搜索
 git log --oneline b6d4c39 -1             # 第十二轮（本文 §15）1 个提交：首页作者头部照截图重排
+git log --oneline a8a51a2..8cefc77       # 第十三轮（本文 §16）3 个提交：报告入库、站内路径、出厂封面
 git show --stat <commit>                  # 单个提交的改动面
 git show <commit>                         # 含提交信息里的实测数据
 ```
